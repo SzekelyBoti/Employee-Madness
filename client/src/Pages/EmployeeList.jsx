@@ -148,15 +148,13 @@ const EmployeeList = () => {
 
   return (
     <div>
-      <div>
+      <div className="filters">
         <input
           type="text"
           placeholder="Search by name"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
         />
-      </div>
-      <div className="filters">
         <input
           className="searchLevel"
           type="text"
