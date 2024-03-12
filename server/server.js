@@ -13,7 +13,20 @@ if (!MONGO_URL) {
 
 const app = express();
 app.use(express.json());
+app.get("/api/employees/:searchTerm", async (req, res) => {
+  try {
+    const searchTerm = req.params.searchTerm;
 
+    const employees = await EmployeeModel.find({
+      name: { $regex: new RegExp(searchTerm, "i") }, // Search by name instead of _id
+    });
+
+    res.json(employees);
+  } catch (error) {
+    console.error("Error fetching employees:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 app.get("/api/employees/", async (req, res) => {
   const employees = await EmployeeModel.find().sort({ created: "desc" });
   return res.json(employees);

@@ -5,6 +5,9 @@ import EmployeeTable from "../Components/EmployeeTable";
 const fetchEmployees = () => {
   return fetch("/api/employees").then((res) => res.json());
 };
+const fetchSearchEmployees = (searchTerm) => {
+  return fetch(`/api/employees/${searchTerm}`).then((res) => res.json());
+};
 
 const deleteEmployee = (id) => {
   return fetch(`/api/employees/${id}`, { method: "DELETE" }).then((res) =>
@@ -19,6 +22,7 @@ const EmployeeList = () => {
   const [levelFilter, setLevelFilter] = useState("");
   const [sortBy, setSortBy] = useState(null);
   const [sortOrder, setSortOrder] = useState("asc");
+  const [searchTerm, setSearchTerm] = useState("");
 
   const handleDelete = (id) => {
     deleteEmployee(id);
@@ -33,6 +37,18 @@ const EmployeeList = () => {
       setEmployees(employees);
     });
   }, []);
+  useEffect(() => {
+    if (searchTerm.trim() !== "") {
+      fetchSearchEmployees(searchTerm)
+        .then((employees) => {
+          setLoading(false);
+          setEmployees(employees);
+        })
+        .catch((error) => {
+          console.error("Error fetching search results:", error);
+        });
+    }
+  }, [searchTerm]);
 
   if (loading) {
     return <Loading />;
@@ -132,6 +148,14 @@ const EmployeeList = () => {
 
   return (
     <div>
+      <div>
+        <input
+          type="text"
+          placeholder="Search by name"
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+        />
+      </div>
       <div className="filters">
         <input
           className="searchLevel"
