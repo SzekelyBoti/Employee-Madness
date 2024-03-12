@@ -27,6 +27,17 @@ app.get("/api/employees/:searchTerm", async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+app.get("/api/missing-employees", async (req, res) => {
+  try {
+    const employees = await EmployeeModel.find({ present: false });
+    console.log(employees);
+
+    return res.json(employees);
+  } catch (error) {
+    console.error("Error fetching missing employees:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
 app.get("/api/employees/", async (req, res) => {
   const employees = await EmployeeModel.find().sort({ created: "desc" });
   return res.json(employees);

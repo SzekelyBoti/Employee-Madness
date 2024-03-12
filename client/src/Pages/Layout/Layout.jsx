@@ -10,6 +10,11 @@ const Layout = () => (
           <Link to="/">Employees</Link>
         </li>
         <li>
+          <Link to="/missing">
+            <button type="button">Missing Employees</button>
+          </Link>
+        </li>
+        <li>
           <Link to="/create">
             <button type="button">Create Employee</button>
           </Link>

@@ -14,6 +14,15 @@ const deleteEmployee = (id) => {
     res.json()
   );
 };
+const updateEmployeePresent = (id, present) => {
+  return fetch(`/api/employees/${id}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ present }),
+  }).then((res) => res.json());
+};
 
 const EmployeeList = () => {
   const [loading, setLoading] = useState(true);
@@ -23,6 +32,7 @@ const EmployeeList = () => {
   const [sortBy, setSortBy] = useState(null);
   const [sortOrder, setSortOrder] = useState("asc");
   const [searchTerm, setSearchTerm] = useState("");
+  const [originalPresentState, setOriginalPresentState] = useState({});
 
   const handleDelete = (id) => {
     deleteEmployee(id);
@@ -35,6 +45,12 @@ const EmployeeList = () => {
     fetchEmployees().then((employees) => {
       setLoading(false);
       setEmployees(employees);
+      // Store the original present state of each employee
+      const initialState = {};
+      employees.forEach((employee) => {
+        initialState[employee._id] = employee.present;
+      });
+      setOriginalPresentState(initialState);
     });
   }, []);
   useEffect(() => {
@@ -53,7 +69,24 @@ const EmployeeList = () => {
   if (loading) {
     return <Loading />;
   }
-
+  const handlePresentChange = async (id, present) => {
+    try {
+      await updateEmployeePresent(id, present);
+      setEmployees((prevEmployess) =>
+        prevEmployess.map((employee) =>
+          employee._id === id ? { ...employee, present } : employee
+        )
+      );
+    } catch (error) {
+      console.error("Error updating present status:", error);
+    }
+  };
+  const handleCheckboxChange = (id, checked) => {
+    // Revert the checkbox to its original state if unchecked
+    if (!checked) {
+      handlePresentChange(id, originalPresentState[id]);
+    }
+  };
   const handleSort = (key) => {
     if (sortBy === key) {
       setSortOrder(sortOrder === "asc" ? "desc" : "asc");
@@ -192,7 +225,12 @@ const EmployeeList = () => {
           {sortBy === "position" && (sortOrder === "asc" ? "▲" : "▼")}
         </button>
       </div>
-      <EmployeeTable employees={sortedEmployees} onDelete={handleDelete} />
+      <EmployeeTable
+        employees={sortedEmployees}
+        onPresentChange={handlePresentChange}
+        onCheckboxChange={handleCheckboxChange}
+        onDelete={handleDelete}
+      />
     </div>
   );
 };

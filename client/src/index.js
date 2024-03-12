@@ -15,6 +15,7 @@ import FormTest from "./Pages/FormTest";
 import EquipmentList from "./Pages/EquipmentList";
 import EquipmentCreator from "./Pages/EquipmentCreator";
 import EquipmentUpdater from "./Pages/EquipmentUpdater";
+import MissingEmployees from "./Components/EmployeeMissing";
 
 const router = createBrowserRouter([
   {
@@ -33,6 +34,10 @@ const router = createBrowserRouter([
       {
         path: "/update/:id",
         element: <EmployeeUpdater />,
+      },
+      {
+        path: "/missing",
+        element: <MissingEmployees />,
       },
       {
         path: "/table-test",
