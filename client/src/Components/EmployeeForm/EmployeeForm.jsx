@@ -1,22 +1,35 @@
 import { useState } from "react";
 
-const EmployeeForm = ({ onSave, disabled, employee, onCancel }) => {
+const EmployeeForm = ({ onSave, disabled, employee, onCancel, equipments }) => {
   const [name, setName] = useState(employee?.name ?? "");
   const [level, setLevel] = useState(employee?.level ?? "");
   const [position, setPosition] = useState(employee?.position ?? "");
+  const [selectedEquipment, setSelectedEquipment] = useState({
+    id: employee?.equipment?.id ?? "",
+    name: employee?.equipment?.name ?? "",
+  });
 
   const onSubmit = (e) => {
     e.preventDefault();
 
+    const employeeData = {
+      name,
+      level,
+      position,
+      equipment: selectedEquipment,
+    };
+
     if (employee) {
       return onSave({
         ...employee,
+        ...employeeData,
         name,
         level,
         position,
       });
+    } else {
+      onSave(employeeData);
     }
-
     return onSave({
       name,
       level,
@@ -54,6 +67,27 @@ const EmployeeForm = ({ onSave, disabled, employee, onCancel }) => {
           name="position"
           id="position"
         />
+      </div>
+      <div className="control">
+        <label htmlFor="equipment">Select Equipment:</label>
+        <select
+          value={selectedEquipment.id}
+          onChange={(e) =>
+            setSelectedEquipment({
+              id: e.target.value,
+              name: e.target.selectedOptions[0].text,
+            })
+          }
+          name="equipment"
+          id="equipment"
+        >
+          <option value="">-- Select Equipment --</option>
+          {equipments.map((equipment) => (
+            <option key={equipment._id} value={equipment._id}>
+              {equipment.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="buttons">

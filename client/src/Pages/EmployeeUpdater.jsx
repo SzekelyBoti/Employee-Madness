@@ -1,22 +1,7 @@
-import { useEffect } from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import EmployeeForm from "../Components/EmployeeForm";
 import Loading from "../Components/Loading";
-
-const updateEmployee = (employee) => {
-  return fetch(`/api/employees/${employee._id}`, {
-    method: "PATCH",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(employee),
-  }).then((res) => res.json());
-};
-
-const fetchEmployee = (id) => {
-  return fetch(`/api/employees/${id}`).then((res) => res.json());
-};
 
 const EmployeeUpdater = () => {
   const { id } = useParams();
@@ -26,21 +11,48 @@ const EmployeeUpdater = () => {
   const [updateLoading, setUpdateLoading] = useState(false);
   const [employeeLoading, setEmployeeLoading] = useState(true);
 
+  const fetchEquipmentData = () => {
+    fetch("/api/equipments")
+      .then((res) => res.json())
+      .then((data) => {
+        setEquipmentData(data);
+      })
+      .catch((error) => {
+        console.error("Error fetching equipment data:", error);
+      });
+  };
+
+  const [equipmentData, setEquipmentData] = useState([]);
+
   useEffect(() => {
     setEmployeeLoading(true);
-    fetchEmployee(id)
+    fetch(`/api/employees/${id}`)
+      .then((res) => res.json())
       .then((employee) => {
         setEmployee(employee);
         setEmployeeLoading(false);
       });
+
+    fetchEquipmentData();
   }, [id]);
 
-  const handleUpdateEmployee = (employee) => {
+  const handleUpdateEmployee = (updatedEmployee) => {
     setUpdateLoading(true);
-    updateEmployee(employee)
+    fetch(`/api/employees/${id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(updatedEmployee),
+    })
+      .then((res) => res.json())
       .then(() => {
         setUpdateLoading(false);
         navigate("/");
+      })
+      .catch((error) => {
+        console.error("Error updating employee:", error);
+        setUpdateLoading(false);
       });
   };
 
@@ -49,12 +61,15 @@ const EmployeeUpdater = () => {
   }
 
   return (
-    <EmployeeForm
-      employee={employee}
-      onSave={handleUpdateEmployee}
-      disabled={updateLoading}
-      onCancel={() => navigate("/")}
-    />
+    <div>
+      <EmployeeForm
+        employee={employee}
+        onSave={handleUpdateEmployee}
+        disabled={updateLoading}
+        onCancel={() => navigate("/")}
+        equipments={equipmentData}
+      />
+    </div>
   );
 };
 
