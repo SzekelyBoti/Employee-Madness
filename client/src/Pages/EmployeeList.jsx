@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import Loading from "../Components/Loading";
 import EmployeeTable from "../Components/EmployeeTable";
 
+const PAGE_SIZE = 10;
+
 const fetchEmployees = () => {
   return fetch("/api/employees").then((res) => res.json());
 };
@@ -33,6 +35,8 @@ const EmployeeList = () => {
   const [sortOrder, setSortOrder] = useState("asc");
   const [searchTerm, setSearchTerm] = useState("");
   const [originalPresentState, setOriginalPresentState] = useState({});
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
   const handleDelete = (id) => {
     deleteEmployee(id);
@@ -45,12 +49,13 @@ const EmployeeList = () => {
     fetchEmployees().then((employees) => {
       setLoading(false);
       setEmployees(employees);
-      // Store the original present state of each employee
+
       const initialState = {};
       employees.forEach((employee) => {
         initialState[employee._id] = employee.present;
       });
       setOriginalPresentState(initialState);
+      setTotalPages(Math.ceil(employees.length / PAGE_SIZE));
     });
   }, []);
   useEffect(() => {
@@ -59,6 +64,7 @@ const EmployeeList = () => {
         .then((employees) => {
           setLoading(false);
           setEmployees(employees);
+          setTotalPages(Math.ceil(employees.length / PAGE_SIZE));
         })
         .catch((error) => {
           console.error("Error fetching search results:", error);
@@ -82,7 +88,6 @@ const EmployeeList = () => {
     }
   };
   const handleCheckboxChange = (id, checked) => {
-    // Revert the checkbox to its original state if unchecked
     if (!checked) {
       handlePresentChange(id, originalPresentState[id]);
     }
@@ -95,89 +100,97 @@ const EmployeeList = () => {
       setSortOrder("asc");
     }
   };
+  const getPaginatedEmployees = () => {
+    const filteredEmployees = employees.filter((employee) => {
+      const positionMatch = positionFilter
+        ? employee.position
+            .toLowerCase()
+            .includes(positionFilter.toLocaleLowerCase())
+        : true;
+      const levelMatch = levelFilter
+        ? employee.level.toLowerCase().includes(levelFilter.toLocaleLowerCase())
+        : true;
 
-  const filteredEmployees = employees.filter((employee) => {
-    const positionMatch = positionFilter
-      ? employee.position
-          .toLowerCase()
-          .includes(positionFilter.toLocaleLowerCase())
-      : true;
-    const levelMatch = levelFilter
-      ? employee.level.toLowerCase().includes(levelFilter.toLocaleLowerCase())
-      : true;
+      return positionMatch && levelMatch;
+    });
 
-    return positionMatch && levelMatch;
-  });
+    const sortedEmployees = [...filteredEmployees].sort((a, b) => {
+      let comparison = 0;
 
-  const sortedEmployees = [...filteredEmployees].sort((a, b) => {
-    let comparison = 0;
+      if (
+        sortBy === "firstName" ||
+        sortBy === "lastName" ||
+        sortBy === "middleName"
+      ) {
+        const aNameParts = a.name.split(" ");
+        const bNameParts = b.name.split(" ");
+        let aFirstName = "";
+        let aMiddleName = "";
+        let aLastName = "";
+        let bFirstName = "";
+        let bMiddleName = "";
+        let bLastName = "";
 
-    if (
-      sortBy === "firstName" ||
-      sortBy === "lastName" ||
-      sortBy === "middleName"
-    ) {
-      const aNameParts = a.name.split(" ");
-      const bNameParts = b.name.split(" ");
-      let aFirstName = "";
-      let aMiddleName = "";
-      let aLastName = "";
-      let bFirstName = "";
-      let bMiddleName = "";
-      let bLastName = "";
-
-      if (aNameParts.length === 1) {
-        aFirstName = aNameParts[0];
-      } else if (aNameParts.length === 2) {
-        aFirstName = aNameParts[0];
-        aLastName = aNameParts[1];
-      } else {
-        aFirstName = aNameParts[0];
-        aLastName = aNameParts.pop();
-        aMiddleName = aNameParts.slice(1).join(" ");
-      }
-
-      if (bNameParts.length === 1) {
-        bFirstName = bNameParts[0];
-      } else if (bNameParts.length === 2) {
-        bFirstName = bNameParts[0];
-        bLastName = bNameParts[1];
-      } else {
-        bFirstName = bNameParts[0];
-        bLastName = bNameParts.pop();
-        bMiddleName = bNameParts.slice(1).join(" ");
-      }
-
-      if (sortBy === "firstName") {
-        comparison = aFirstName.localeCompare(bFirstName);
-      } else if (sortBy === "middleName") {
-        if (aMiddleName && bMiddleName) {
-          comparison = aMiddleName.localeCompare(bMiddleName);
-        } else if (!aMiddleName && bMiddleName) {
-          comparison = -1;
-        } else if (aMiddleName && !bMiddleName) {
-          comparison = 1;
+        if (aNameParts.length === 1) {
+          aFirstName = aNameParts[0];
+        } else if (aNameParts.length === 2) {
+          aFirstName = aNameParts[0];
+          aLastName = aNameParts[1];
         } else {
+          aFirstName = aNameParts[0];
+          aLastName = aNameParts.pop();
+          aMiddleName = aNameParts.slice(1).join(" ");
+        }
+
+        if (bNameParts.length === 1) {
+          bFirstName = bNameParts[0];
+        } else if (bNameParts.length === 2) {
+          bFirstName = bNameParts[0];
+          bLastName = bNameParts[1];
+        } else {
+          bFirstName = bNameParts[0];
+          bLastName = bNameParts.pop();
+          bMiddleName = bNameParts.slice(1).join(" ");
+        }
+
+        if (sortBy === "firstName") {
           comparison = aFirstName.localeCompare(bFirstName);
+        } else if (sortBy === "middleName") {
+          if (aMiddleName && bMiddleName) {
+            comparison = aMiddleName.localeCompare(bMiddleName);
+          } else if (!aMiddleName && bMiddleName) {
+            comparison = -1;
+          } else if (aMiddleName && !bMiddleName) {
+            comparison = 1;
+          } else {
+            comparison = aFirstName.localeCompare(bFirstName);
+          }
+        } else if (sortBy === "lastName") {
+          if (aLastName && bLastName) {
+            comparison = aLastName.localeCompare(bLastName);
+          } else if (!aLastName && bLastName) {
+            comparison = -1;
+          } else if (aLastName && !bLastName) {
+            comparison = 1;
+          }
         }
-      } else if (sortBy === "lastName") {
-        if (aLastName && bLastName) {
-          comparison = aLastName.localeCompare(bLastName);
-        } else if (!aLastName && bLastName) {
-          comparison = -1;
-        } else if (aLastName && !bLastName) {
-          comparison = 1;
-        }
+      } else {
+        const aValue = a[sortBy] || "";
+        const bValue = b[sortBy] || "";
+
+        comparison = aValue.localeCompare(bValue);
       }
-    } else {
-      const aValue = a[sortBy] || "";
-      const bValue = b[sortBy] || "";
 
-      comparison = aValue.localeCompare(bValue);
-    }
+      return sortOrder === "asc" ? comparison : -comparison;
+    });
 
-    return sortOrder === "asc" ? comparison : -comparison;
-  });
+    const startIndex = (currentPage - 1) * PAGE_SIZE;
+    const endIndex = Math.min(startIndex + PAGE_SIZE, sortedEmployees.length);
+
+    return sortedEmployees.slice(startIndex, endIndex);
+  };
+
+  const paginatedEmployees = getPaginatedEmployees();
 
   return (
     <div>
@@ -226,10 +239,13 @@ const EmployeeList = () => {
         </button>
       </div>
       <EmployeeTable
-        employees={sortedEmployees}
+        employees={paginatedEmployees}
         onPresentChange={handlePresentChange}
         onCheckboxChange={handleCheckboxChange}
         onDelete={handleDelete}
+        currentPage={currentPage}
+        totalPages={totalPages}
+        onPageChange={setCurrentPage}
       />
     </div>
   );

@@ -11,6 +11,18 @@ const EmployeeUpdater = () => {
   const [updateLoading, setUpdateLoading] = useState(false);
   const [employeeLoading, setEmployeeLoading] = useState(true);
 
+  const fetchFavoriteBrandsData = () => {
+    fetch("/api/favoriteBrands")
+      .then((res) => res.json())
+      .then((data) => {
+        setFavoriteBrandData(data);
+      })
+      .catch((error) => {
+        console.error("Error fetching favoriteBrand data:", error);
+      });
+  };
+  const [favoriteBrandData, setFavoriteBrandData] = useState([]);
+
   const fetchEquipmentData = () => {
     fetch("/api/equipments")
       .then((res) => res.json())
@@ -34,6 +46,8 @@ const EmployeeUpdater = () => {
       });
 
     fetchEquipmentData();
+
+    fetchFavoriteBrandsData();
   }, [id]);
 
   const handleUpdateEmployee = (updatedEmployee) => {
@@ -67,6 +81,7 @@ const EmployeeUpdater = () => {
         onSave={handleUpdateEmployee}
         disabled={updateLoading}
         onCancel={() => navigate("/")}
+        favoriteBrands={favoriteBrandData}
         equipments={equipmentData}
       />
     </div>

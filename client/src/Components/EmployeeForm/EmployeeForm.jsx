@@ -1,12 +1,23 @@
 import { useState } from "react";
 
-const EmployeeForm = ({ onSave, disabled, employee, onCancel, equipments }) => {
+const EmployeeForm = ({
+  onSave,
+  disabled,
+  employee,
+  onCancel,
+  equipments,
+  favoriteBrands,
+}) => {
   const [name, setName] = useState(employee?.name ?? "");
   const [level, setLevel] = useState(employee?.level ?? "");
   const [position, setPosition] = useState(employee?.position ?? "");
   const [selectedEquipment, setSelectedEquipment] = useState({
     id: employee?.equipment?.id ?? "",
     name: employee?.equipment?.name ?? "",
+  });
+  const [selectedFavoriteBrand, setFavoriteBrand] = useState({
+    id: employee?.favoriteBrand?.id ?? "",
+    name: employee?.favoriteBrand?.name ?? "",
   });
 
   const onSubmit = (e) => {
@@ -16,6 +27,7 @@ const EmployeeForm = ({ onSave, disabled, employee, onCancel, equipments }) => {
       name,
       level,
       position,
+      favoriteBrand: selectedFavoriteBrand,
       equipment: selectedEquipment,
     };
 
@@ -67,6 +79,27 @@ const EmployeeForm = ({ onSave, disabled, employee, onCancel, equipments }) => {
           name="position"
           id="position"
         />
+      </div>
+      <div className="control">
+        <label htmlFor="favoriteBrand">Select Favorite Brand:</label>
+        <select
+          value={selectedFavoriteBrand.id}
+          onChange={(e) =>
+            setFavoriteBrand({
+              id: e.target.value,
+              name: e.target.selectedOptions[0].text,
+            })
+          }
+          name="favoriteBrand"
+          id="favoriteBrand"
+        >
+          <option value="">-- Select Favorite Brand --</option>
+          {favoriteBrands.map((favoriteBrand) => (
+            <option key={favoriteBrand._id} value={favoriteBrand._id}>
+              {favoriteBrand.name}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="control">
         <label htmlFor="equipment">Select Equipment:</label>

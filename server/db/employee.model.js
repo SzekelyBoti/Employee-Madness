@@ -1,6 +1,5 @@
 // https://mongoosejs.com/
 const mongoose = require("mongoose");
-const EquipmentSchema = require("./equipment.model");
 
 const { Schema } = mongoose;
 
@@ -8,6 +7,15 @@ const EmployeeSchema = new Schema({
   name: String,
   level: String,
   position: String,
+  favoriteBrand: [
+    {
+      favoriteBrandId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "FavoriteBrand",
+      },
+      name: String,
+    },
+  ],
   equipment: [
     {
       equipmentId: { type: Schema.Types.ObjectId, ref: "Equipment" },

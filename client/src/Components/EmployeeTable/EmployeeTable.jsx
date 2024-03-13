@@ -1,7 +1,14 @@
 import { Link } from "react-router-dom";
 import "./EmployeeTable.css";
 
-const EmployeeTable = ({ employees, onDelete, onPresentChange }) => (
+const EmployeeTable = ({
+  employees,
+  onDelete,
+  onPresentChange,
+  currentPage,
+  totalPages,
+  onPageChange,
+}) => (
   <div className="EmployeeTable">
     <table>
       <thead>
@@ -41,6 +48,22 @@ const EmployeeTable = ({ employees, onDelete, onPresentChange }) => (
         ))}
       </tbody>
     </table>
+
+    <div className="pagination">
+      <button
+        disabled={currentPage === 1}
+        onClick={() => onPageChange(currentPage - 1)}
+      >
+        Previous
+      </button>
+      <span>{`Page ${currentPage} of ${totalPages}`}</span>
+      <button
+        disabled={currentPage === totalPages}
+        onClick={() => onPageChange(currentPage + 1)}
+      >
+        Next
+      </button>
+    </div>
   </div>
 );
 
