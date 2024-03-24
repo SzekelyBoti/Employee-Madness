@@ -11,6 +11,7 @@ if (!MONGO_URL) {
   console.error("Missing MONGO_URL environment variable");
   process.exit(1);
 }
+"124"
 
 const app = express();
 app.use(express.json());
