@@ -23,6 +23,6 @@ Content-Type:  application/json
 
 ###
 
-GET http://localhost:8080/api/equipments
+GET http://localhost:8080/api/workingGroups/
 
 ###

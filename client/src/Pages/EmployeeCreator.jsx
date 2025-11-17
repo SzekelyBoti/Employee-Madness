@@ -1,65 +1,86 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import EmployeeForm from "../Components/EmployeeForm";
 
-const createEmployee = (employee) => {
-  return fetch("/api/employees", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(employee),
-  }).then((res) => res.json());
+const API_BASE_URL = process.env.REACT_APP_API_URL || "";
+
+const createEmployee = async (employee) => {
+  try {
+    const res = await fetch(`${API_BASE_URL}/api/employees`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(employee),
+    });
+    if (!res.ok) throw new Error("Failed to create employee");
+    return await res.json();
+  } catch (error) {
+    console.error("Error creating employee:", error);
+    throw error;
+  }
 };
 
 const EmployeeCreator = () => {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
-
-  const fetchFavoriteBrandsData = () => {
-    fetch("/api/favoriteBrands")
-      .then((res) => res.json())
-      .then((data) => {
-        setFavoriteBrandData(data);
-      })
-      .catch((error) => {
-        console.error("Error fetching favoriteBrand data:", error);
-      });
-  };
   const [favoriteBrandData, setFavoriteBrandData] = useState([]);
-  const fetchEquipmentData = () => {
-    fetch("/api/equipments")
-      .then((res) => res.json())
-      .then((data) => {
-        setEquipmentData(data);
-      })
-      .catch((error) => {
-        console.error("Error fetching equipment data:", error);
-      });
-  };
-
   const [equipmentData, setEquipmentData] = useState([]);
+  const [error, setError] = useState(null);
 
-  const handleCreateEmployee = (employee) => {
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [brandsRes, equipmentRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/favoriteBrands`),
+          fetch(`${API_BASE_URL}/api/equipments`),
+        ]);
+
+        if (!brandsRes.ok || !equipmentRes.ok)
+          throw new Error("Failed to fetch initial data");
+
+        const [brands, equipments] = await Promise.all([
+          brandsRes.json(),
+          equipmentRes.json(),
+        ]);
+
+        setFavoriteBrandData(brands);
+        setEquipmentData(equipments);
+      } catch (err) {
+        console.error(err);
+        setError("Failed to load form data");
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  const handleCreateEmployee = async (employee) => {
     setLoading(true);
-
-    createEmployee(employee).then(() => {
-      setLoading(false);
+    setError(null);
+    try {
+      await createEmployee(employee);
       navigate("/");
-    });
+    } catch (err) {
+      setError("Failed to create employee");
+    } finally {
+      setLoading(false);
+    }
   };
-  fetchFavoriteBrandsData();
-  fetchEquipmentData();
+
+  if (error) {
+    return <p style={{ color: "red" }}>{error}</p>;
+  }
 
   return (
-    <EmployeeForm
-      onCancel={() => navigate("/")}
-      disabled={loading}
-      onSave={handleCreateEmployee}
-      favoriteBrands={favoriteBrandData}
-      equipments={equipmentData}
-    />
+      <EmployeeForm
+          onCancel={() => navigate("/")}
+          disabled={loading}
+          onSave={handleCreateEmployee}
+          favoriteBrands={favoriteBrandData}
+          equipments={equipmentData}
+      />
   );
 };
 
 export default EmployeeCreator;
+
+

@@ -1,36 +1,48 @@
-// https://mongoosejs.com/
 const mongoose = require("mongoose");
-
 const { Schema } = mongoose;
 
-const EmployeeSchema = new Schema({
-  name: String,
-  level: String,
-  position: String,
-  favoriteBrand: [
+const EmployeeSchema = new Schema(
     {
-      favoriteBrandId: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "FavoriteBrand",
+      name: {
+        type: String,
+        required: true,
+        trim: true,
       },
-      name: String,
+      level: {
+        type: String,
+        required: true,
+        min: 0,
+      },
+      position: {
+        type: String,
+        required: true,
+        trim: true,
+      },
+      workingGroup: {
+        type: Schema.Types.ObjectId,
+        ref: "WorkingGroup",
+        default: null,
+      },
+      favoriteBrand: {
+        type: Schema.Types.ObjectId,
+        ref: "FavoriteBrand",
+        required: true,
+      },
+      equipment: [
+        {
+          type: Schema.Types.ObjectId,
+          ref: "Equipment",
+        },
+      ],
+      present: {
+        type: Boolean,
+        default: false,
+      },
     },
-  ],
-  equipment: [
     {
-      equipmentId: { type: Schema.Types.ObjectId, ref: "Equipment" },
-      name: String,
-    },
-  ],
-
-  present: {
-    type: Boolean,
-    default: false,
-  },
-  created: {
-    type: Date,
-    default: Date.now,
-  },
-});
+      timestamps: true,
+    }
+);
 
 module.exports = mongoose.model("Employee", EmployeeSchema);
+

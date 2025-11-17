@@ -1,60 +1,93 @@
-/*
-Loading the .env file and creates environment variables from it
-*/
 require("dotenv").config();
 const mongoose = require("mongoose");
-const names = require("./names.json");
-const levels = require("./levels.json");
-const positions = require("./positions.json");
+
 const EmployeeModel = require("../db/employee.model");
+const EquipmentModel = require("../db/equipment.model");
 const FavoriteBrandsModel = require("../db/favoriteBrands.model");
-const brands = require("./brands.json");
+const WorkingGroupModel = require("../db/workingGroup.model");
 
-const mongoUrl = process.env.MONGO_URL;
+const names = require("../populate/names.json");
+const levels = require("../populate/levels.json");
+const positions = require("../populate/positions.json");
+const brands = require("../populate/brands.json");
 
-if (!mongoUrl) {
+const { MONGO_URL } = process.env;
+
+if (!MONGO_URL) {
   console.error("Missing MONGO_URL environment variable");
-  process.exit(1); // exit the current program
+  process.exit(1);
 }
 
-const pick = (from) => from[Math.floor(Math.random() * (from.length - 0))];
-
-const populateEmployees = async () => {
-  await EmployeeModel.deleteMany({});
-  const favoriteBrandIds = await FavoriteBrandsModel.find().select("_id");
-
-  const employees = names.map((name, index) => ({
-    name,
-    level: pick(levels),
-    position: pick(positions),
-    favoriteBrand: favoriteBrandIds[index % favoriteBrandIds.length],
-  }));
-
-  await EmployeeModel.create(...employees);
-  console.log("Employees created");
-};
+const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
 const populateBrands = async () => {
-  await FavoriteBrandsModel.deleteMany({});
+  const count = await FavoriteBrandsModel.countDocuments();
+  if (count > 0) return await FavoriteBrandsModel.find();
 
-  const brandsData = brands.map((name) => ({
+  const brandsData = brands.map((name) => ({ name }));
+  const savedBrands = await FavoriteBrandsModel.create(brandsData);
+  console.log(`Brands created: ${savedBrands.length}`);
+  return savedBrands;
+};
+
+const populateEmployees = async (favoriteBrands) => {
+  const count = await EmployeeModel.countDocuments();
+  if (count > 0) return;
+
+  // If your Employee schema expects level as Number, convert here
+  const numericLevels = levels.map((lvl) =>
+      isNaN(Number(lvl)) ? levels.indexOf(lvl) + 1 : Number(lvl)
+  );
+
+  const employeesData = names.map((name, index) => ({
     name,
+    level: pick(numericLevels),
+    position: pick(positions),
+    favoriteBrand: favoriteBrands[index % favoriteBrands.length]._id,
+    present: pick([true, false]),
   }));
-  await FavoriteBrandsModel.create(...brandsData);
-  console.log("Brands created");
+
+  const savedEmployees = await EmployeeModel.create(employeesData);
+  console.log(`Employees created: ${savedEmployees.length}`);
+};
+
+const populateWorkingGroups = async () => {
+  const count = await WorkingGroupModel.countDocuments();
+  if (count > 0) return;
+
+  // Example: create a few empty working groups
+  const groups = ["Alpha", "Beta", "Gamma"].map((name) => ({ name }));
+  const savedGroups = await WorkingGroupModel.create(groups);
+  console.log(`Working groups created: ${savedGroups.length}`);
+};
+
+const populateDBIfEmpty = async () => {
+  const favoriteBrands = await populateBrands();
+  await populateEmployees(favoriteBrands);
+  await populateWorkingGroups();
 };
 
 const main = async () => {
-  await mongoose.connect(mongoUrl);
+  try {
+    await mongoose.connect(MONGO_URL, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    console.log("Connected to MongoDB");
 
-  await populateEmployees();
+    await populateDBIfEmpty();
 
-  await populateBrands();
-
-  await mongoose.disconnect();
+    await mongoose.disconnect();
+    console.log("Database population complete");
+    process.exit(0);
+  } catch (err) {
+    console.error("Populate script failed:", err);
+    process.exit(1);
+  }
 };
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+main();
+
+
+
+

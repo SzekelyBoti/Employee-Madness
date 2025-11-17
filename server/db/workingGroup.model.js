@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const { Schema } = mongoose;
 
-const FavoriteBrandSchema = new Schema(
+const WorkingGroupSchema = new Schema(
     {
       name: {
         type: String,
@@ -9,11 +9,17 @@ const FavoriteBrandSchema = new Schema(
         trim: true,
         unique: true,
       },
+      employees: [
+        {
+          type: Schema.Types.ObjectId,
+          ref: "Employee",
+        },
+      ],
     },
     {
       timestamps: true,
     }
 );
 
-module.exports = mongoose.model("FavoriteBrand", FavoriteBrandSchema);
+module.exports = mongoose.model("WorkingGroup", WorkingGroupSchema);
 
