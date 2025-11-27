@@ -2,6 +2,7 @@ require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const client = require("prom-client");
 
 // Models
 const EmployeeModel = require("./db/employee.model");
@@ -19,12 +20,20 @@ if (!MONGO_URL) {
 const app = express();
 
 // Middleware
+client.collectDefaultMetrics({ prefix: "employee_app_" });
+
 app.use(express.json());
 app.use(cors({
   origin: "*",
 }));
 
 // ----------------------- Employee Routes -----------------------
+app.get("/metrics", async (req, res) => {
+  console.log("Prometheus scraped metrics");
+  res.set("Content-Type", client.register.contentType);
+  res.end(await client.register.metrics());
+});
+
 app.get("/api/employees", async (req, res, next) => {
   try {
     const employees = await EmployeeModel.find()

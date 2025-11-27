@@ -1,0 +1,15 @@
+﻿apiVersion: batch/v1
+kind: Job
+metadata:
+  name: employees-populate
+spec:
+  template:
+    spec:
+      containers:
+        - name: populate-script
+          image: boti95/backend:latest
+          command: ["node", "populate/populate.js"]
+          env:
+            - name: MONGO_URL
+              value: "mongodb://mongo:27017/employeesdb"
+      restartPolicy: Never
