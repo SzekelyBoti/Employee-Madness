@@ -17,9 +17,6 @@ spec:
           image: boti95/frontend:latest
           ports:
             - containerPort: 80
-          env:
-            - name: REACT_APP_API_URL
-              value: "http://server:8080"
 ---
 apiVersion: v1
 kind: Service
