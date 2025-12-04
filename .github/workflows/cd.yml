@@ -13,25 +13,33 @@ jobs:
 
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
-      ECR_FRONTEND_URI: ${{ secrets.ECR_FRONTEND_URI }}
-      ECR_BACKEND_URI: ${{ secrets.ECR_BACKEND_URI }}
-      EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
       NAMESPACE_DEFAULT: default
       NAMESPACE_MONITOR: monitoring
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout repo
+        uses: actions/checkout@v3
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
+        uses: aws-actions/configure-aws-credentials@v3
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Fetch Terraform outputs
+        run: |
+          terraform init
+          CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
+          ECR_FRONTEND_URI=$(terraform output -raw ecr_frontend_uri)
+          ECR_BACKEND_URI=$(terraform output -raw ecr_backend_uri)
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+          echo "ECR_FRONTEND_URI=$ECR_FRONTEND_URI" >> $GITHUB_ENV
+          echo "ECR_BACKEND_URI=$ECR_BACKEND_URI" >> $GITHUB_ENV
+
       - name: Update kubeconfig
         run: |
-          aws eks update-kubeconfig --region $AWS_REGION --name $EKS_CLUSTER_NAME
+          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
 
       - name: Deploy backend
         run: |
@@ -44,7 +52,8 @@ jobs:
           kubectl set image deployment/client client=$ECR_FRONTEND_URI:$FRONTEND_TAG -n $NAMESPACE_DEFAULT
           kubectl rollout status deployment/client -n $NAMESPACE_DEFAULT
 
-      - name: Wait for pods
+      - name: Wait for pods to be ready
         run: |
           kubectl wait --for=condition=ready pod -l app=server -n $NAMESPACE_DEFAULT --timeout=180s
           kubectl wait --for=condition=ready pod -l app=client -n $NAMESPACE_DEFAULT --timeout=180s
+
