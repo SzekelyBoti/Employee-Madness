@@ -92,7 +92,7 @@ jobs:
           echo "Frontend will use API URL: $API_URL"
 
           TAG=$(date +%s)
-          docker build --build-arg REACT_APP_API_URL=$API_URL -t frontend:$TAG ./client
+          docker build --build-arg REACT_APP_API_URL=http://backend-service:8080 -t frontend:$TAG ./client
           docker tag frontend:$TAG $ECR_FRONTEND_URI:$TAG
           docker push $ECR_FRONTEND_URI:$TAG
           echo "FRONTEND_TAG=$TAG" >> $GITHUB_ENV
