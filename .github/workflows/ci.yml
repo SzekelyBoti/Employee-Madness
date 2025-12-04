@@ -19,17 +19,20 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install frontend dependencies
-        working-directory: ./client
-        run: npm ci
+      - name: Install dependencies
+        run: |
+          cd client
+          npm ci
 
       - name: Run frontend tests
-        working-directory: ./client
-        run: npm test -- --watchAll=false --passWithNoTests
+        run: |
+          cd client
+          npm test -- --watchAll=false --passWithNoTests
 
       - name: Build frontend
-        working-directory: ./client
-        run: CI=false npm run build
+        run: |
+          cd client
+          CI=false npm run build   # Prevent CI=true treating warnings as errors
 
   backend:
     name: Backend Build & Test
@@ -43,17 +46,18 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install backend dependencies
-        working-directory: ./server
-        run: npm ci
+      - name: Install dependencies
+        run: |
+          cd server
+          npm ci
 
       - name: Run backend tests
-        working-directory: ./server
         run: |
-          if [ -f package.json ] && grep -q '"test"' package.json; then
-            npm test -- --watchAll=false || echo "No tests to run"
+          cd server
+          if [ -f package.json ] && npm run | grep -q test; then
+            npm test -- --watchAll=false || true
           else
-            echo "No test script defined, skipping"
+            echo "No tests defined, skipping..."
           fi
 
   docker:
@@ -69,14 +73,26 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
       - name: Login to AWS ECR
         run: |
           aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_FRONTEND_URI
 
       - name: Build and Push Frontend
         run: |
+          # Get backend hostname for frontend API
+          BACKEND_HOST=$(kubectl get svc server -n default -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
+          API_URL="http://$BACKEND_HOST:8080"
+          echo "Frontend will use API URL: $API_URL"
+
           TAG=$(date +%s)
-          docker build --build-arg REACT_APP_API_URL=http://placeholder:8080 -t frontend:$TAG ./client
+          docker build --build-arg REACT_APP_API_URL=$API_URL -t frontend:$TAG ./client
           docker tag frontend:$TAG $ECR_FRONTEND_URI:$TAG
           docker push $ECR_FRONTEND_URI:$TAG
           echo "FRONTEND_TAG=$TAG" >> $GITHUB_ENV
@@ -86,4 +102,5 @@ jobs:
           docker build -t backend ./server
           docker tag backend:latest $ECR_BACKEND_URI:latest
           docker push $ECR_BACKEND_URI:latest
+
 
