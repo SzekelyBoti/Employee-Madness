@@ -60,7 +60,7 @@ jobs:
   docker:
     name: Docker Build & Push
     runs-on: ubuntu-latest
-    needs: [frontend, backend]
+    needs: [ frontend, backend ]
 
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
@@ -70,17 +70,24 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Login to AWS ECR
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region $AWS_REGION | \
+          docker login --username AWS --password-stdin $ECR_FRONTEND_URI
+          aws ecr get-login-password --region $AWS_REGION | \
+          docker login --username AWS --password-stdin $ECR_BACKEND_URI
 
       - name: Build and Push Frontend
         run: |
           TAG=$(date +%s)
-          docker build --build-arg REACT_APP_API_URL=http://backend-placeholder:8080 -t frontend:$TAG ./client
+          docker build --build-arg REACT_APP_API_URL=http://placeholder:8080 -t frontend:$TAG ./client
           docker tag frontend:$TAG $ECR_FRONTEND_URI:$TAG
           docker push $ECR_FRONTEND_URI:$TAG
           echo "FRONTEND_TAG=$TAG" >> $GITHUB_ENV
