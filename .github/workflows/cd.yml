@@ -13,6 +13,8 @@ jobs:
 
     env:
       AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_FRONTEND_URI: ${{ secrets.ECR_FRONTEND_URI }}
+      ECR_BACKEND_URI: ${{ secrets.ECR_BACKEND_URI }}
       NAMESPACE_DEFAULT: default
 
     steps:
@@ -31,13 +33,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Fetch Terraform outputs
+      - name: Terraform Init + Apply
         working-directory: ./terraform
         run: |
           export TF_WARN_OUTPUT_ERRORS=1
           terraform init -input=false
-            
-          # Safe extraction of the output
+          terraform apply -auto-approve
+
+          # Extract cluster name output
           CLUSTER_NAME=$(terraform output -raw eks_cluster_name | tr -d '\n\r')
           echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
 
@@ -60,5 +63,6 @@ jobs:
         run: |
           kubectl wait --for=condition=ready pod -l app=server -n $NAMESPACE_DEFAULT --timeout=180s
           kubectl wait --for=condition=ready pod -l app=client -n $NAMESPACE_DEFAULT --timeout=180s
+
 
 
