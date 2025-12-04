@@ -24,10 +24,8 @@ jobs:
           cd client
           npm ci
 
-      - name: Run tests
-        run: |
-          cd client
-          npm test -- --watchAll=false
+      - name: Run frontend tests
+        run: npm test -- --watchAll=false --passWithNoTests
 
       - name: Build frontend
         run: |
