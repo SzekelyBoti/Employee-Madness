@@ -32,8 +32,7 @@ jobs:
       - name: Build frontend
         run: |
           cd client
-          # Use placeholder API URL in CI
-          REACT_APP_API_URL=http://backend-placeholder:8080 npm run build
+          CI=false REACT_APP_API_URL=http://backend-placeholder:8080 npm run build
 
   backend:
     name: Backend Build & Test
