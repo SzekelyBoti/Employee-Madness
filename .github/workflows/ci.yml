@@ -83,6 +83,13 @@ jobs:
           docker login --username AWS --password-stdin $ECR_FRONTEND_URI
           aws ecr get-login-password --region $AWS_REGION | \
           docker login --username AWS --password-stdin $ECR_BACKEND_URI
+          
+      - name: Create ECR repositories if not exist
+        run: |
+          aws ecr describe-repositories --repository-names employee-madness-frontend || \
+          aws ecr create-repository --repository-name employee-madness-frontend
+          aws ecr describe-repositories --repository-names employee-madness-backend || \
+          aws ecr create-repository --repository-name employee-madness-backend
 
       - name: Build and Push Frontend
         run: |
