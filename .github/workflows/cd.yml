@@ -32,10 +32,13 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Fetch Terraform outputs
-        working-directory: ./terraform   # <-- set this to the folder where your terraform files are
+        working-directory: ./terraform
         run: |
+          export TF_WARN_OUTPUT_ERRORS=1
           terraform init -input=false
-          CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
+            
+          # Safe extraction of the output
+          CLUSTER_NAME=$(terraform output -raw eks_cluster_name | tr -d '\n\r')
           echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
 
       - name: Update kubeconfig
