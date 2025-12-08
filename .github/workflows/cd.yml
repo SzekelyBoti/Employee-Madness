@@ -33,6 +33,33 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      - name: Pre-import ECR repos if they already exist
+        working-directory: ./terraform
+        run: |
+          set +e
+
+          echo "Checking if ECR repositories already exist..."
+
+          # Frontend
+          aws ecr describe-repositories --repository-names employee-madness-frontend >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "Importing existing frontend repository..."
+            terraform import aws_ecr_repository.frontend employee-madness-frontend || true
+          else
+            echo "Frontend repo does not exist yet — Terraform will create it."
+          fi
+
+          # Backend
+          aws ecr describe-repositories --repository-names employee-madness-backend >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "Importing existing backend repository..."
+            terraform import aws_ecr_repository.backend employee-madness-backend || true
+          else
+            echo "Backend repo does not exist yet — Terraform will create it."
+          fi
+
+          set -e
+
       - name: Terraform Init + Apply
         working-directory: ./terraform
         run: |
@@ -40,7 +67,6 @@ jobs:
           terraform init -input=false
           terraform apply -auto-approve
 
-          # Extract cluster name output
           CLUSTER_NAME=$(terraform output -raw eks_cluster_name | tr -d '\n\r')
           echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
 
