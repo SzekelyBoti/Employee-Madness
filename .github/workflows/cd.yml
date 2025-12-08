@@ -78,6 +78,16 @@ jobs:
           fi
 
           set -e
+          if aws eks describe-cluster --name employee-madness-cluster >/dev/null 2>&1; then
+            echo "Importing existing EKS cluster..."
+            terraform import aws_eks_cluster.my_cluster employee-madness-cluster || true
+          else
+            echo "EKS cluster does not exist — Terraform will create it."
+          fi
+          if aws eks describe-nodegroup --cluster-name employee-madness-cluster --nodegroup-name employee-madness-nodegroup >/dev/null 2>&1; then
+            echo "Importing existing node group..."
+            terraform import aws_eks_node_group.node_group employee-madness-cluster:employee-madness-nodegroup || true
+          fi
 
       - name: Terraform Apply
         working-directory: ./terraform
