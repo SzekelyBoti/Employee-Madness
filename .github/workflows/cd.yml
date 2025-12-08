@@ -66,54 +66,54 @@ jobs:
           export TF_WARN_OUTPUT_ERRORS=1
           terraform init -input=false
 
-          - name: Pre-import AWS resources if they already exist
-            working-directory: ./terraform
-            run: |
-              set +e
+      - name: Pre-import AWS resources if they already exist
+        working-directory: ./terraform
+        run: |
+          set +e
                 
-              echo "Checking if ECR repositories already exist..."
+          echo "Checking if ECR repositories already exist..."
                 
-              # FRONTEND REPO
-              aws ecr describe-repositories --repository-names employee-madness-frontend >/dev/null 2>&1
-              if [ $? -eq 0 ]; then
-                echo "Importing existing frontend repository..."
-                terraform import aws_ecr_repository.frontend employee-madness-frontend || true
-              else
-                echo "Frontend repo does not exist — Terraform will create it."
-              fi
+          # FRONTEND REPO
+          aws ecr describe-repositories --repository-names employee-madness-frontend >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "Importing existing frontend repository..."
+            terraform import aws_ecr_repository.frontend employee-madness-frontend || true
+          else
+            echo "Frontend repo does not exist — Terraform will create it."
+          fi
                 
-              # BACKEND REPO
-              aws ecr describe-repositories --repository-names employee-madness-backend >/dev/null 2>&1
-              if [ $? -eq 0 ]; then
-                echo "Importing existing backend repository..."
-                terraform import aws_ecr_repository.backend employee-madness-backend || true
-              else
-                echo "Backend repo does not exist — Terraform will create it."
-              fi
+          # BACKEND REPO
+          aws ecr describe-repositories --repository-names employee-madness-backend >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "Importing existing backend repository..."
+            terraform import aws_ecr_repository.backend employee-madness-backend || true
+          else
+            echo "Backend repo does not exist — Terraform will create it."
+          fi
                 
-              # EKS IAM ROLE
-              aws iam get-role --role-name employee-madness-cluster-eks-role >/dev/null 2>&1
-              if [ $? -eq 0 ]; then
-                echo "Importing existing EKS cluster role..."
-                terraform import aws_iam_role.eks_role employee-madness-cluster-eks-role || true
-              fi
+          # EKS IAM ROLE
+          aws iam get-role --role-name employee-madness-cluster-eks-role >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "Importing existing EKS cluster role..."
+            terraform import aws_iam_role.eks_role employee-madness-cluster-eks-role || true
+          fi
                 
-              # NODEGROUP ROLE
-              aws iam get-role --role-name employee-madness-cluster-node-role >/dev/null 2>&1
-              if [ $? -eq 0 ]; then
-                echo "Importing existing EKS node role..."
-                terraform import aws_iam_role.node_role employee-madness-cluster-node-role || true
-              fi
+          # NODEGROUP ROLE
+          aws iam get-role --role-name employee-madness-cluster-node-role >/dev/null 2>&1
+          if [ $? -eq 0 ]; then
+            echo "Importing existing EKS node role..."
+            terraform import aws_iam_role.node_role employee-madness-cluster-node-role || true
+          fi
                 
-              set -e
+          set -e
 
-          - name: Terraform Apply
-            working-directory: ./terraform
-            run: |
-              terraform apply -auto-approve
+      - name: Terraform Apply
+        working-directory: ./terraform
+        run: |
+          terraform apply -auto-approve
                 
-              CLUSTER_NAME=$(terraform output -raw eks_cluster_name | tr -d '\n\r')
-              echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+          CLUSTER_NAME=$(terraform output -raw eks_cluster_name | tr -d '\n\r')
+          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
 
       - name: Update kubeconfig
         run: |
