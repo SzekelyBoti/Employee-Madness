@@ -104,6 +104,3 @@ jobs:
           docker build -t backend ./server
           docker tag backend:latest $ECR_BACKEND_URI:latest
           docker push $ECR_BACKEND_URI:latest
-
-
-

@@ -18,10 +18,36 @@ ECR_POPULATE="employee-madness-populate"
 echo "🌟 Provisioning AWS resources with Terraform..."
 pushd $TERRAFORM_DIR
 
+cluster_name=$(terraform console <<< 'var.cluster_name')
+cluster_name=${cluster_name//\"/}
+
+echo "Cluster name detected: $cluster_name"
+
+echo "Importing existing IAM roles (if they exist)..."
+terraform import aws_iam_role.eks_role "${cluster_name}-eks-role" || true
+terraform import aws_iam_role.node_role "${cluster_name}-node-role" || true
+
+terraform import aws_iam_role_policy_attachment.eks_cluster_policy \
+  "${cluster_name}-eks-role/arn:aws:iam::aws:policy/AmazonEKSClusterPolicy" || true
+
+terraform import aws_iam_role_policy_attachment.eks_node_policy_attach \
+  "${cluster_name}-node-role/arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy" || true
+
+terraform import aws_iam_role_policy_attachment.cni_policy_attach \
+  "${cluster_name}-node-role/arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy" || true
+
+terraform import aws_iam_role_policy_attachment.ssm_policy_attach \
+  "${cluster_name}-node-role/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" || true
+
+terraform import aws_iam_role_policy_attachment.cloudwatch_policy_attach \
+  "${cluster_name}-node-role/arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy" || true
+
+terraform import aws_iam_role_policy_attachment.ecr_readonly_attach \
+  "${cluster_name}-node-role/arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly" || true
+
 terraform init
 terraform apply -auto-approve
 
-# Export outputs
 export EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
 export ECR_FRONTEND_URI=$(terraform output -raw ecr_frontend_uri)
 export ECR_BACKEND_URI=$(terraform output -raw ecr_backend_uri)
