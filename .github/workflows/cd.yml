@@ -37,36 +37,30 @@ jobs:
         working-directory: ./terraform
         run: terraform init -input=false
 
-      # Pre-import resources
+      # Pre-import resources only if they exist
       - name: Pre-import AWS resources
         working-directory: ./terraform
         run: |
           set +e
           echo "Checking existing AWS resources..."
 
-          if aws ecr describe-repositories --repository-names employee-madness-frontend >/dev/null 2>&1; then
-            terraform import aws_ecr_repository.frontend employee-madness-frontend || true
-          fi
+          aws ecr describe-repositories --repository-names employee-madness-frontend >/dev/null 2>&1 \
+            && terraform import aws_ecr_repository.frontend employee-madness-frontend || true
 
-          if aws ecr describe-repositories --repository-names employee-madness-backend >/dev/null 2>&1; then
-            terraform import aws_ecr_repository.backend employee-madness-backend || true
-          fi
+          aws ecr describe-repositories --repository-names employee-madness-backend >/dev/null 2>&1 \
+            && terraform import aws_ecr_repository.backend employee-madness-backend || true
 
-          if aws iam get-role --role-name employee-madness-cluster-eks-role >/dev/null 2>&1; then
-            terraform import aws_iam_role.eks_role employee-madness-cluster-eks-role || true
-          fi
+          aws iam get-role --role-name employee-madness-cluster-eks-role >/dev/null 2>&1 \
+            && terraform import aws_iam_role.eks_role employee-madness-cluster-eks-role || true
 
-          if aws iam get-role --role-name employee-madness-cluster-node-role >/dev/null 2>&1; then
-            terraform import aws_iam_role.node_role employee-madness-cluster-node-role || true
-          fi
+          aws iam get-role --role-name employee-madness-cluster-node-role >/dev/null 2>&1 \
+            && terraform import aws_iam_role.node_role employee-madness-cluster-node-role || true
 
-          if aws eks describe-cluster --name employee-madness-cluster >/dev/null 2>&1; then
-            terraform import aws_eks_cluster.my_cluster employee-madness-cluster || true
-          fi
+          aws eks describe-cluster --name employee-madness-cluster >/dev/null 2>&1 \
+            && terraform import aws_eks_cluster.my_cluster employee-madness-cluster || true
 
-          if aws eks describe-nodegroup --cluster-name employee-madness-cluster --nodegroup-name employee-madness-nodegroup >/dev/null 2>&1; then
-            terraform import aws_eks_node_group.node_group employee-madness-cluster:employee-madness-nodegroup || true
-          fi
+          aws eks describe-nodegroup --cluster-name employee-madness-cluster --nodegroup-name employee-madness-nodegroup >/dev/null 2>&1 \
+            && terraform import aws_eks_node_group.node_group employee-madness-cluster:employee-madness-nodegroup || true
 
           set -e
 
@@ -75,28 +69,36 @@ jobs:
         working-directory: ./terraform
         run: terraform apply -auto-approve
 
+      # SAFELY EXPORT EKS CLUSTER NAME
       - name: Export Cluster Name
         working-directory: ./terraform
         run: |
-          CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
-          echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
+          echo "CLUSTER_NAME=$(terraform output -raw eks_cluster_name)" >> $GITHUB_ENV
 
+      # UPDATE KUBECONFIG
       - name: Update kubeconfig
-        run: |
-          aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+        run: aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
 
+      # DEPLOY BACKEND
       - name: Deploy backend
         run: |
           kubectl apply -f k8s/server.yaml
           kubectl rollout status deployment/server -n $NAMESPACE_DEFAULT
 
+      # LOAD FRONTEND TAG FROM CI ARTIFACT
+      - name: Load Frontend Tag
+        run: |
+          echo "FRONTEND_TAG=$(cat frontend_tag.txt)" >> $GITHUB_ENV
+
+      # DEPLOY FRONTEND
       - name: Deploy frontend
         run: |
-          FRONTEND_TAG=$(grep FRONTEND_TAG $GITHUB_ENV | cut -d '=' -f2)
           kubectl set image deployment/client client=$ECR_FRONTEND_URI:$FRONTEND_TAG -n $NAMESPACE_DEFAULT
           kubectl rollout status deployment/client -n $NAMESPACE_DEFAULT
 
+      # WAIT FOR PODS
       - name: Wait for pods to be ready
         run: |
           kubectl wait --for=condition=ready pod -l app=server -n $NAMESPACE_DEFAULT --timeout=180s
           kubectl wait --for=condition=ready pod -l app=client -n $NAMESPACE_DEFAULT --timeout=180s
+
