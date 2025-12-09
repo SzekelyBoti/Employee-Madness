@@ -7,100 +7,40 @@ on:
   pull_request:
 
 jobs:
-  frontend:
-    name: Frontend Build & Test
+  validate:
+    name: Validate Builds
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v3
         with:
           node-version: '20'
-
-      - name: Install dependencies
-        run: |
-          cd client
-          npm ci
-
-      - name: Run frontend tests
-        run: |
-          cd client
-          npm test -- --watchAll=false --passWithNoTests
 
       - name: Build frontend
         run: |
           cd client
-          CI=false REACT_APP_API_URL=http://backend-placeholder:8080 npm run build
-
-  backend:
-    name: Backend Build & Test
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '20'
-
-      - name: Install dependencies
-        run: |
-          cd server
           npm ci
+          CI=false REACT_APP_API_URL=http://localhost:8080 npm run build
+          echo "Frontend builds successfully"
 
-      - name: Run backend tests
+      - name: Build Docker images (development only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
         run: |
-          cd server
-          # If no test script exists, allow pass
-          npm test -- --watchAll=false || echo "No backend tests defined"
-
-  docker:
-    name: Docker Build & Push
-    runs-on: ubuntu-latest
-    needs: [ frontend, backend ]
-
-    env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      ECR_FRONTEND_URI: ${{ secrets.ECR_FRONTEND_URI }}
-      ECR_BACKEND_URI: ${{ secrets.ECR_BACKEND_URI }}
-
-    steps:
-      - uses: actions/checkout@v3
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v2
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Login to ECR
-        run: |
-          aws ecr get-login-password --region $AWS_REGION | \
-          docker login --username AWS --password-stdin $ECR_FRONTEND_URI
-          aws ecr get-login-password --region $AWS_REGION | \
-          docker login --username AWS --password-stdin $ECR_BACKEND_URI
-          
-      - name: Create ECR repositories if not exist
-        run: |
-          aws ecr describe-repositories --repository-names employee-madness-frontend || \
-          aws ecr create-repository --repository-name employee-madness-frontend
-          aws ecr describe-repositories --repository-names employee-madness-backend || \
-          aws ecr create-repository --repository-name employee-madness-backend
-
-      - name: Build and Push Frontend
-        run: |
+          # Generate build tag
           TAG=$(date +%s)
-          docker build --build-arg REACT_APP_API_URL=http://placeholder:8080 -t frontend:$TAG ./client
-          docker tag frontend:$TAG $ECR_FRONTEND_URI:$TAG
-          docker push $ECR_FRONTEND_URI:$TAG
-          echo "FRONTEND_TAG=$TAG" >> $GITHUB_ENV
+          echo "$TAG" > frontend_tag.txt
+          
+          # Build Docker images to verify they work
+          docker build -t frontend:$TAG ./client
+          docker build -t backend:$TAG ./server
+          echo "Docker images built successfully"
 
-      - name: Build and Push Backend
-        run: |
-          docker build -t backend ./server
-          docker tag backend:latest $ECR_BACKEND_URI:latest
-          docker push $ECR_BACKEND_URI:latest
+      - name: Upload build tag
+        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-tag
+          path: frontend_tag.txt

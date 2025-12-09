@@ -4,101 +4,329 @@ on:
   workflow_run:
     workflows: ["CI"]
     types: [completed]
+    branches: [development]
 
 jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     env:
-      AWS_REGION: ${{ secrets.AWS_REGION }}
-      ECR_FRONTEND_URI: ${{ secrets.ECR_FRONTEND_URI }}
-      ECR_BACKEND_URI: ${{ secrets.ECR_BACKEND_URI }}
+      AWS_REGION: eu-north-1
+      CLUSTER_NAME: employee-madness-cluster
       NAMESPACE_DEFAULT: default
+      NAMESPACE_MONITOR: monitoring
+      FRONTEND_ECR_NAME: employee-madness-frontend
+      BACKEND_ECR_NAME: employee-madness-backend
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Install Terraform
-        uses: hashicorp/setup-terraform@v2
-        with:
-          terraform_version: 1.9.0
+      - name: Clean up duplicate state files
+        run: |
+          # Move any duplicate state file to terraform directory
+          if [ -f "terraform.tfstate" ]; then
+            echo "Moving duplicate state file to terraform directory..."
+            mv terraform.tfstate terraform/ || true
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      # Terraform Init
-      - name: Terraform Init
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y kubectl helm jq gettext-base
+
+      # ========== ECR SETUP ==========
+      - name: Setup ECR repositories
+        id: ecr-setup
+        run: |
+          # Function to create or get ECR repository
+          setup_ecr() {
+            local repo_name=$1
+            local output_var=$2
+          
+            if aws ecr describe-repositories --repository-names "$repo_name" > /dev/null 2>&1; then
+              echo "ECR repository '$repo_name' exists"
+              REPO_URI=$(aws ecr describe-repositories --repository-names "$repo_name" --query 'repositories[0].repositoryUri' --output text)
+            else
+              echo "Creating ECR repository '$repo_name'..."
+              aws ecr create-repository --repository-name "$repo_name" --region ${{ env.AWS_REGION }}
+              REPO_URI=$(aws ecr describe-repositories --repository-names "$repo_name" --query 'repositories[0].repositoryUri' --output text)
+            fi
+            echo "$output_var=$REPO_URI" >> $GITHUB_OUTPUT
+          }
+          
+          setup_ecr "${{ env.FRONTEND_ECR_NAME }}" "FRONTEND_ECR_URI"
+          setup_ecr "${{ env.BACKEND_ECR_NAME }}" "BACKEND_ECR_URI"
+
+      # ========== EKS CLUSTER CHECK ==========
+      - name: Check EKS cluster status
+        id: eks-check
+        run: |
+          if aws eks describe-cluster --name "${{ env.CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
+            echo "EKS cluster '${{ env.CLUSTER_NAME }}' exists"
+            CLUSTER_STATUS=$(aws eks describe-cluster --name "${{ env.CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" --query 'cluster.status' --output text)
+            echo "CLUSTER_EXISTS=true" >> $GITHUB_OUTPUT
+            echo "CLUSTER_STATUS=$CLUSTER_STATUS" >> $GITHUB_OUTPUT
+          
+            if [ "$CLUSTER_STATUS" = "ACTIVE" ]; then
+              aws eks update-kubeconfig --region "${{ env.AWS_REGION }}" --name "${{ env.CLUSTER_NAME }}"
+              echo "KUBECONFIG_UPDATED=true" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "EKS cluster '${{ env.CLUSTER_NAME }}' does not exist"
+            echo "CLUSTER_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+
+      # ========== TERRAFORM (Only if needed) ==========
+      - name: Setup Terraform
+        if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: 1.9.0
+
+      - name: Initialize Terraform
+        if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
         working-directory: ./terraform
-        run: terraform init -input=false
+        run: terraform init
 
-      # Pre-import resources only if they exist
-      - name: Pre-import AWS resources
+      - name: Apply Terraform
+        if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
         working-directory: ./terraform
         run: |
-          set +e
-          echo "Checking existing AWS resources..."
+          # Import existing ECR repositories
+          terraform import aws_ecr_repository.frontend "${{ env.FRONTEND_ECR_NAME }}" || echo "Frontend ECR not in Terraform state"
+          terraform import aws_ecr_repository.backend "${{ env.BACKEND_ECR_NAME }}" || echo "Backend ECR not in Terraform state"
+          
+          terraform apply -auto-approve -input=false
+          
+          # Get Terraform outputs
+          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ env.CLUSTER_NAME }}")
+          echo "EKS_CLUSTER_NAME=$EKS_CLUSTER_NAME" >> $GITHUB_ENV
 
-          aws ecr describe-repositories --repository-names employee-madness-frontend >/dev/null 2>&1 \
-            && terraform import aws_ecr_repository.frontend employee-madness-frontend || true
-
-          aws ecr describe-repositories --repository-names employee-madness-backend >/dev/null 2>&1 \
-            && terraform import aws_ecr_repository.backend employee-madness-backend || true
-
-          aws iam get-role --role-name employee-madness-cluster-eks-role >/dev/null 2>&1 \
-            && terraform import aws_iam_role.eks_role employee-madness-cluster-eks-role || true
-
-          aws iam get-role --role-name employee-madness-cluster-node-role >/dev/null 2>&1 \
-            && terraform import aws_iam_role.node_role employee-madness-cluster-node-role || true
-
-          aws eks describe-cluster --name employee-madness-cluster >/dev/null 2>&1 \
-            && terraform import aws_eks_cluster.my_cluster employee-madness-cluster || true
-
-          aws eks describe-nodegroup --cluster-name employee-madness-cluster --nodegroup-name employee-madness-nodegroup >/dev/null 2>&1 \
-            && terraform import aws_eks_node_group.node_group employee-madness-cluster:employee-madness-nodegroup || true
-
-          set -e
-
-      # Terraform Apply
-      - name: Terraform Apply
-        working-directory: ./terraform
-        run: terraform apply -auto-approve
-
-      # SAFELY EXPORT EKS CLUSTER NAME
-      - name: Export Cluster Name
-        working-directory: ./terraform
+      # ========== SET ENVIRONMENT VARIABLES ==========
+      - name: Set deployment variables
         run: |
-          echo "CLUSTER_NAME=$(terraform output -raw eks_cluster_name)" >> $GITHUB_ENV
+          # Use existing cluster or Terraform-created cluster
+          if [ "${{ steps.eks-check.outputs.CLUSTER_EXISTS }}" = "true" ]; then
+            echo "Using existing cluster: ${{ env.CLUSTER_NAME }}"
+            echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
+          fi
+          
+          # Set ECR URIs
+          echo "ECR_FRONTEND_URI=${{ steps.ecr-setup.outputs.FRONTEND_ECR_URI }}" >> $GITHUB_ENV
+          echo "ECR_BACKEND_URI=${{ steps.ecr-setup.outputs.BACKEND_ECR_URI }}" >> $GITHUB_ENV
+          
+          # Ensure cluster name is set
+          if [ -z "${{ env.EKS_CLUSTER_NAME }}" ]; then
+            echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
+          fi
 
-      # UPDATE KUBECONFIG
-      - name: Update kubeconfig
-        run: aws eks update-kubeconfig --region $AWS_REGION --name $CLUSTER_NAME
+      # ========== VERIFY KUBECTL ACCESS ==========
+      - name: Verify kubectl access
+        run: |
+          echo "Configuring kubectl for cluster: ${{ env.EKS_CLUSTER_NAME }}"
+          
+          # Update kubeconfig (in case it wasn't done earlier)
+          aws eks update-kubeconfig \
+            --region "${{ env.AWS_REGION }}" \
+            --name "${{ env.EKS_CLUSTER_NAME }}" \
+            --alias "${{ env.EKS_CLUSTER_NAME }}"
+          
+          # Test access
+          echo "=== Testing kubectl access ==="
+          kubectl cluster-info || echo "Cluster info not available yet"
+          kubectl get nodes --request-timeout=30s || echo "Nodes not available yet - cluster may still be initializing"
 
-      # DEPLOY BACKEND
+      # ========== DEPLOY BACKEND FIRST ==========
       - name: Deploy backend
         run: |
-          kubectl apply -f k8s/server.yaml
-          kubectl rollout status deployment/server -n $NAMESPACE_DEFAULT
+          echo "Deploying backend..."
+          
+          # Create namespace if it doesn't exist
+          kubectl create namespace "${{ env.NAMESPACE_DEFAULT }}" --dry-run=client -o yaml | kubectl apply -f -
+          
+          # Deploy server
+          kubectl apply -f k8s/server.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
+          
+          echo "Waiting for backend service..."
+          sleep 10
 
-      # LOAD FRONTEND TAG FROM CI ARTIFACT
-      - name: Load Frontend Tag
+      # ========== GET BACKEND LOAD BALANCER ==========
+      - name: Get backend LoadBalancer URL
+        id: get-backend-lb
         run: |
-          echo "FRONTEND_TAG=$(cat frontend_tag.txt)" >> $GITHUB_ENV
+          echo "Waiting for backend LoadBalancer..."
+          BACKEND_HOST=""
+          for i in {1..30}; do
+            BACKEND_HOST=$(kubectl get svc server -n "${{ env.NAMESPACE_DEFAULT }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+            if [ -n "$BACKEND_HOST" ]; then
+              echo "API_URL=http://$BACKEND_HOST:8080" >> $GITHUB_ENV
+              echo "Backend LoadBalancer: $BACKEND_HOST"
+              break
+            fi
+            echo "Attempt $i/30: LoadBalancer not ready yet..."
+            sleep 5
+          done
+          
+          if [ -z "$BACKEND_HOST" ]; then
+            echo "WARNING: Could not get LoadBalancer hostname"
+            echo "API_URL=http://localhost:8080" >> $GITHUB_ENV
+          fi
 
-      # DEPLOY FRONTEND
-      - name: Deploy frontend
+      # ========== BUILD AND PUSH IMAGES ==========
+      - name: Build and push frontend image
+        env:
+          REACT_APP_API_URL: ${{ env.API_URL }}
         run: |
-          kubectl set image deployment/client client=$ECR_FRONTEND_URI:$FRONTEND_TAG -n $NAMESPACE_DEFAULT
-          kubectl rollout status deployment/client -n $NAMESPACE_DEFAULT
+          # Login to ECR
+          aws ecr get-login-password --region "${{ env.AWS_REGION }}" | \
+            docker login --username AWS --password-stdin "${{ env.ECR_FRONTEND_URI }}"
+          
+          # Generate unique tag
+          TAG=$(date +%s)
+          echo "FRONTEND_TAG=$TAG" >> $GITHUB_ENV
+          
+          # Build with API URL
+          docker build \
+            --build-arg REACT_APP_API_URL="$REACT_APP_API_URL" \
+            -t frontend:$TAG ./client
+          
+          # Tag and push
+          docker tag frontend:$TAG "${{ env.ECR_FRONTEND_URI }}:$TAG"
+          docker push "${{ env.ECR_FRONTEND_URI }}:$TAG"
+          
+          # Also push as latest
+          docker tag frontend:$TAG "${{ env.ECR_FRONTEND_URI }}:latest"
+          docker push "${{ env.ECR_FRONTEND_URI }}:latest"
 
-      # WAIT FOR PODS
+      - name: Build and push backend image
+        run: |
+          # Login to ECR
+          aws ecr get-login-password --region "${{ env.AWS_REGION }}" | \
+            docker login --username AWS --password-stdin "${{ env.ECR_BACKEND_URI }}"
+          
+          # Build and push backend
+          docker build -t backend ./server
+          docker tag backend:latest "${{ env.ECR_BACKEND_URI }}:latest"
+          docker push "${{ env.ECR_BACKEND_URI }}:latest"
+
+      # ========== DEPLOY MONGODB ==========
+      - name: Deploy MongoDB
+        run: |
+          kubectl apply -f k8s/mongo.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
+          
+          # Wait for MongoDB to be ready
+          kubectl wait --for=condition=ready pod -l app=mongo \
+            -n "${{ env.NAMESPACE_DEFAULT }}" \
+            --timeout=120s || echo "MongoDB might still be starting"
+
+      # ========== UPDATE DEPLOYMENTS WITH ECR IMAGES ==========
+      - name: Update backend deployment with ECR image
+        run: |
+          # Update backend image
+          kubectl set image deployment/server \
+            server="${{ env.ECR_BACKEND_URI }}:latest" \
+            -n "${{ env.NAMESPACE_DEFAULT }}" || echo "Backend update might have failed"
+          
+          # Wait for rollout
+          kubectl rollout status deployment/server \
+            -n "${{ env.NAMESPACE_DEFAULT }}" \
+            --timeout=180s || echo "Backend rollout check failed"
+
+      - name: Deploy or update frontend
+        run: |
+          # Check if frontend deployment exists
+          if kubectl get deployment client -n "${{ env.NAMESPACE_DEFAULT }}" > /dev/null 2>&1; then
+            echo "Updating existing frontend deployment..."
+            kubectl set image deployment/client \
+              client="${{ env.ECR_FRONTEND_URI }}:${{ env.FRONTEND_TAG }}" \
+              -n "${{ env.NAMESPACE_DEFAULT }}"
+          else
+            echo "Creating new frontend deployment..."
+            kubectl apply -f k8s/client.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
+            kubectl set image deployment/client \
+              client="${{ env.ECR_FRONTEND_URI }}:${{ env.FRONTEND_TAG }}" \
+              -n "${{ env.NAMESPACE_DEFAULT }}"
+          fi
+          
+          # Wait for rollout
+          kubectl rollout status deployment/client \
+            -n "${{ env.NAMESPACE_DEFAULT }}" \
+            --timeout=180s || echo "Frontend rollout check failed"
+
+      # ========== SETUP MONITORING ==========
+      - name: Setup monitoring namespace
+        run: |
+          kubectl create namespace "${{ env.NAMESPACE_MONITOR }}" --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy monitoring stack
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+          
+          helm upgrade --install monitoring \
+            prometheus-community/kube-prometheus-stack \
+            --namespace "${{ env.NAMESPACE_MONITOR }}" \
+            --create-namespace \
+            --set grafana.adminPassword=admin \
+            --wait --timeout=300s
+
+      # ========== POPULATE DATABASE ==========
+      - name: Populate database
+        run: |
+          kubectl delete job employees-populate -n "${{ env.NAMESPACE_DEFAULT }}" --ignore-not-found
+          kubectl apply -f k8s/populate-job.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
+          kubectl wait --for=condition=complete job/employees-populate \
+            -n "${{ env.NAMESPACE_DEFAULT }}" \
+            --timeout=120s || echo "Population job may have failed"
+
+      # ========== VERIFY DEPLOYMENT ==========
       - name: Wait for pods to be ready
         run: |
-          kubectl wait --for=condition=ready pod -l app=server -n $NAMESPACE_DEFAULT --timeout=180s
-          kubectl wait --for=condition=ready pod -l app=client -n $NAMESPACE_DEFAULT --timeout=180s
+          # Wait for backend
+          kubectl wait --for=condition=ready pod -l app=server \
+            -n "${{ env.NAMESPACE_DEFAULT }}" \
+            --timeout=180s || echo "Backend pods not ready"
+          
+          # Wait for frontend
+          kubectl wait --for=condition=ready pod -l app=client \
+            -n "${{ env.NAMESPACE_DEFAULT }}" \
+            --timeout=180s || echo "Frontend pods not ready"
+          
+          # Wait for MongoDB
+          kubectl wait --for=condition=ready pod -l app=mongo \
+            -n "${{ env.NAMESPACE_DEFAULT }}" \
+            --timeout=120s || echo "MongoDB pods not ready"
+
+      # ========== DISPLAY RESULTS ==========
+      - name: Display deployment URLs
+        run: |
+          echo "✅ Deployment Complete!"
+          echo "========================"
+          
+          # Get service URLs
+          FRONTEND_URL=$(kubectl get svc client -n "${{ env.NAMESPACE_DEFAULT }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending...")
+          BACKEND_URL=$(kubectl get svc server -n "${{ env.NAMESPACE_DEFAULT }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending...")
+          
+          echo "Frontend URL: http://$FRONTEND_URL"
+          echo "Backend API URL: http://$BACKEND_URL:8080"
+          echo ""
+          echo "Cluster: ${{ env.EKS_CLUSTER_NAME }}"
+          echo "Region: ${{ env.AWS_REGION }}"
+          echo ""
+          echo "Pod Status:"
+          kubectl get pods -n "${{ env.NAMESPACE_DEFAULT }}" --no-headers | awk '{print "  " $1 ": " $3 " (" $2 ")"}' || echo "  Unable to get pods"
+          echo ""
+          echo "To access monitoring:"
+          echo "  Grafana: kubectl port-forward svc/monitoring-grafana 3000:80 -n ${{ env.NAMESPACE_MONITOR }}"
+          echo "  Prometheus: kubectl port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090 -n ${{ env.NAMESPACE_MONITOR }}"
 
