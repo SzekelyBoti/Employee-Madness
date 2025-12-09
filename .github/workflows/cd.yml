@@ -3,8 +3,7 @@
 on:
   workflow_run:
     workflows: ["CI"]
-    types:
-      - completed
+    types: [completed]
 
 jobs:
   deploy:
@@ -33,67 +32,53 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # Terraform Init
       - name: Terraform Init
         working-directory: ./terraform
-        run: |
-          export TF_WARN_OUTPUT_ERRORS=1
-          terraform init -input=false
+        run: terraform init -input=false
 
-      - name: Pre-import AWS resources if they already exist
+      # Pre-import resources
+      - name: Pre-import AWS resources
         working-directory: ./terraform
         run: |
           set +e
-          
           echo "Checking existing AWS resources..."
 
-          # ECR Frontend
           if aws ecr describe-repositories --repository-names employee-madness-frontend >/dev/null 2>&1; then
-            echo "Importing existing frontend repo..."
             terraform import aws_ecr_repository.frontend employee-madness-frontend || true
           fi
 
-          # ECR Backend
           if aws ecr describe-repositories --repository-names employee-madness-backend >/dev/null 2>&1; then
-            echo "Importing existing backend repo..."
             terraform import aws_ecr_repository.backend employee-madness-backend || true
           fi
-          
-          if aws ecr describe-repositories --repository-names employee-madness-populate >/dev/null 2>&1; then
-            echo "Importing existing populate repository..."
-            terraform import aws_ecr_repository.populate employee-madness-populate || true
-          else
-            echo "Populate repo does not exist — Terraform will create it."
-          fi
 
-          # EKS IAM Role
           if aws iam get-role --role-name employee-madness-cluster-eks-role >/dev/null 2>&1; then
-            echo "Importing existing EKS role..."
             terraform import aws_iam_role.eks_role employee-madness-cluster-eks-role || true
           fi
 
-          # Node Role
           if aws iam get-role --role-name employee-madness-cluster-node-role >/dev/null 2>&1; then
-            echo "Importing existing node role..."
             terraform import aws_iam_role.node_role employee-madness-cluster-node-role || true
           fi
 
-          set -e
           if aws eks describe-cluster --name employee-madness-cluster >/dev/null 2>&1; then
-            echo "Importing existing EKS cluster..."
             terraform import aws_eks_cluster.my_cluster employee-madness-cluster || true
-          else
-            echo "EKS cluster does not exist — Terraform will create it."
           fi
+
           if aws eks describe-nodegroup --cluster-name employee-madness-cluster --nodegroup-name employee-madness-nodegroup >/dev/null 2>&1; then
-            echo "Importing existing node group..."
             terraform import aws_eks_node_group.node_group employee-madness-cluster:employee-madness-nodegroup || true
           fi
 
+          set -e
+
+      # Terraform Apply
       - name: Terraform Apply
         working-directory: ./terraform
+        run: terraform apply -auto-approve
+
+      - name: Export Cluster Name
+        working-directory: ./terraform
         run: |
-          terraform apply -auto-approve
-          CLUSTER_NAME=$(terraform output -raw eks_cluster_name | tr -d '\n\r')
+          CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
           echo "CLUSTER_NAME=$CLUSTER_NAME" >> $GITHUB_ENV
 
       - name: Update kubeconfig
@@ -109,7 +94,7 @@ jobs:
         run: |
           FRONTEND_TAG=$(grep FRONTEND_TAG $GITHUB_ENV | cut -d '=' -f2)
           kubectl set image deployment/client client=$ECR_FRONTEND_URI:$FRONTEND_TAG -n $NAMESPACE_DEFAULT
-          kubectl rollout.status deployment/client -n $NAMESPACE_DEFAULT
+          kubectl rollout status deployment/client -n $NAMESPACE_DEFAULT
 
       - name: Wait for pods to be ready
         run: |
