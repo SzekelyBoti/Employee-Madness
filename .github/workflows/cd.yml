@@ -6,6 +6,10 @@ on:
     types: [completed]
     branches: [development]
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   deploy:
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
@@ -24,9 +28,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Download CI build tag
+        uses: actions/download-artifact@v4
+        with:
+          name: build-tag
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Read build tag from CI
+        id: read-tag
+        run: |
+          if [ -f "frontend_tag.txt" ]; then
+            CI_TAG=$(cat frontend_tag.txt)
+            echo "CI_BUILD_TAG=$CI_TAG" >> $GITHUB_ENV
+            echo "Using build tag from CI: $CI_TAG"
+          else
+            CI_TAG=$(date +%s)
+            echo "CI_BUILD_TAG=$CI_TAG" >> $GITHUB_ENV
+            echo "Generated new tag: $CI_TAG (CI artifact not found)"
+          fi
+
       - name: Clean up duplicate state files
         run: |
-          # Move any duplicate state file to terraform directory
           if [ -f "terraform.tfstate" ]; then
             echo "Moving duplicate state file to terraform directory..."
             mv terraform.tfstate terraform/ || true
@@ -42,13 +65,20 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y kubectl helm jq gettext-base
+          sudo apt-get install -y kubectl jq gettext-base curl
+          
+          # Install Helm from official script
+          echo "Installing Helm..."
+          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          
+          # Verify installations
+          kubectl version --client
+          helm version
 
       # ========== ECR SETUP ==========
       - name: Setup ECR repositories
         id: ecr-setup
         run: |
-          # Function to create or get ECR repository
           setup_ecr() {
             local repo_name=$1
             local output_var=$2
@@ -102,30 +132,25 @@ jobs:
         if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
         working-directory: ./terraform
         run: |
-          # Import existing ECR repositories
           terraform import aws_ecr_repository.frontend "${{ env.FRONTEND_ECR_NAME }}" || echo "Frontend ECR not in Terraform state"
           terraform import aws_ecr_repository.backend "${{ env.BACKEND_ECR_NAME }}" || echo "Backend ECR not in Terraform state"
           
           terraform apply -auto-approve -input=false
           
-          # Get Terraform outputs
           EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ env.CLUSTER_NAME }}")
           echo "EKS_CLUSTER_NAME=$EKS_CLUSTER_NAME" >> $GITHUB_ENV
 
       # ========== SET ENVIRONMENT VARIABLES ==========
       - name: Set deployment variables
         run: |
-          # Use existing cluster or Terraform-created cluster
           if [ "${{ steps.eks-check.outputs.CLUSTER_EXISTS }}" = "true" ]; then
             echo "Using existing cluster: ${{ env.CLUSTER_NAME }}"
             echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
           fi
           
-          # Set ECR URIs
           echo "ECR_FRONTEND_URI=${{ steps.ecr-setup.outputs.FRONTEND_ECR_URI }}" >> $GITHUB_ENV
           echo "ECR_BACKEND_URI=${{ steps.ecr-setup.outputs.BACKEND_ECR_URI }}" >> $GITHUB_ENV
           
-          # Ensure cluster name is set
           if [ -z "${{ env.EKS_CLUSTER_NAME }}" ]; then
             echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
           fi
@@ -135,13 +160,11 @@ jobs:
         run: |
           echo "Configuring kubectl for cluster: ${{ env.EKS_CLUSTER_NAME }}"
           
-          # Update kubeconfig (in case it wasn't done earlier)
           aws eks update-kubeconfig \
             --region "${{ env.AWS_REGION }}" \
             --name "${{ env.EKS_CLUSTER_NAME }}" \
             --alias "${{ env.EKS_CLUSTER_NAME }}"
           
-          # Test access
           echo "=== Testing kubectl access ==="
           kubectl cluster-info || echo "Cluster info not available yet"
           kubectl get nodes --request-timeout=30s || echo "Nodes not available yet - cluster may still be initializing"
@@ -150,13 +173,8 @@ jobs:
       - name: Deploy backend
         run: |
           echo "Deploying backend..."
-          
-          # Create namespace if it doesn't exist
           kubectl create namespace "${{ env.NAMESPACE_DEFAULT }}" --dry-run=client -o yaml | kubectl apply -f -
-          
-          # Deploy server
           kubectl apply -f k8s/server.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
-          
           echo "Waiting for backend service..."
           sleep 10
 
@@ -182,83 +200,82 @@ jobs:
             echo "API_URL=http://localhost:8080" >> $GITHUB_ENV
           fi
 
-      # ========== BUILD AND PUSH IMAGES ==========
-      - name: Build and push frontend image
+      # ========== BUILD AND PUSH PRODUCTION IMAGES ==========
+      - name: Build and push production frontend image
         env:
           REACT_APP_API_URL: ${{ env.API_URL }}
         run: |
-          # Login to ECR
           aws ecr get-login-password --region "${{ env.AWS_REGION }}" | \
             docker login --username AWS --password-stdin "${{ env.ECR_FRONTEND_URI }}"
           
-          # Generate unique tag
-          TAG=$(date +%s)
-          echo "FRONTEND_TAG=$TAG" >> $GITHUB_ENV
+          PROD_TAG="${{ env.CI_BUILD_TAG }}-prod"
+          echo "FRONTEND_PROD_TAG=$PROD_TAG" >> $GITHUB_ENV
           
-          # Build with API URL
+          echo "Building production frontend with API_URL: $REACT_APP_API_URL"
           docker build \
             --build-arg REACT_APP_API_URL="$REACT_APP_API_URL" \
-            -t frontend:$TAG ./client
+            -t frontend:$PROD_TAG ./client
           
-          # Tag and push
-          docker tag frontend:$TAG "${{ env.ECR_FRONTEND_URI }}:$TAG"
-          docker push "${{ env.ECR_FRONTEND_URI }}:$TAG"
+          docker tag frontend:$PROD_TAG "${{ env.ECR_FRONTEND_URI }}:$PROD_TAG"
+          docker push "${{ env.ECR_FRONTEND_URI }}:$PROD_TAG"
           
-          # Also push as latest
-          docker tag frontend:$TAG "${{ env.ECR_FRONTEND_URI }}:latest"
+          docker tag frontend:$PROD_TAG "${{ env.ECR_FRONTEND_URI }}:latest"
           docker push "${{ env.ECR_FRONTEND_URI }}:latest"
+          
+          echo "Frontend image pushed: ${{ env.ECR_FRONTEND_URI }}:$PROD_TAG"
 
-      - name: Build and push backend image
+      - name: Build and push production backend image
         run: |
-          # Login to ECR
           aws ecr get-login-password --region "${{ env.AWS_REGION }}" | \
             docker login --username AWS --password-stdin "${{ env.ECR_BACKEND_URI }}"
           
-          # Build and push backend
-          docker build -t backend ./server
-          docker tag backend:latest "${{ env.ECR_BACKEND_URI }}:latest"
+          PROD_TAG="${{ env.CI_BUILD_TAG }}-prod"
+          echo "Building production backend..."
+          
+          docker build -t backend:$PROD_TAG ./server
+          docker tag backend:$PROD_TAG "${{ env.ECR_BACKEND_URI }}:$PROD_TAG"
+          docker push "${{ env.ECR_BACKEND_URI }}:$PROD_TAG"
+          
+          docker tag backend:$PROD_TAG "${{ env.ECR_BACKEND_URI }}:latest"
           docker push "${{ env.ECR_BACKEND_URI }}:latest"
+          
+          echo "Backend image pushed: ${{ env.ECR_BACKEND_URI }}:$PROD_TAG"
 
       # ========== DEPLOY MONGODB ==========
       - name: Deploy MongoDB
         run: |
           kubectl apply -f k8s/mongo.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
           
-          # Wait for MongoDB to be ready
           kubectl wait --for=condition=ready pod -l app=mongo \
             -n "${{ env.NAMESPACE_DEFAULT }}" \
             --timeout=120s || echo "MongoDB might still be starting"
 
-      # ========== UPDATE DEPLOYMENTS WITH ECR IMAGES ==========
-      - name: Update backend deployment with ECR image
+      # ========== UPDATE DEPLOYMENTS ==========
+      - name: Update backend deployment with production image
         run: |
-          # Update backend image
           kubectl set image deployment/server \
-            server="${{ env.ECR_BACKEND_URI }}:latest" \
+            server="${{ env.ECR_BACKEND_URI }}:${{ env.CI_BUILD_TAG }}-prod" \
             -n "${{ env.NAMESPACE_DEFAULT }}" || echo "Backend update might have failed"
           
-          # Wait for rollout
           kubectl rollout status deployment/server \
             -n "${{ env.NAMESPACE_DEFAULT }}" \
             --timeout=180s || echo "Backend rollout check failed"
 
       - name: Deploy or update frontend
         run: |
-          # Check if frontend deployment exists
           if kubectl get deployment client -n "${{ env.NAMESPACE_DEFAULT }}" > /dev/null 2>&1; then
             echo "Updating existing frontend deployment..."
             kubectl set image deployment/client \
-              client="${{ env.ECR_FRONTEND_URI }}:${{ env.FRONTEND_TAG }}" \
+              client="${{ env.ECR_FRONTEND_URI }}:${{ env.FRONTEND_PROD_TAG }}" \
               -n "${{ env.NAMESPACE_DEFAULT }}"
           else
             echo "Creating new frontend deployment..."
             kubectl apply -f k8s/client.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
             kubectl set image deployment/client \
-              client="${{ env.ECR_FRONTEND_URI }}:${{ env.FRONTEND_TAG }}" \
+              client="${{ env.ECR_FRONTEND_URI }}:${{ env.FRONTEND_PROD_TAG }}" \
               -n "${{ env.NAMESPACE_DEFAULT }}"
           fi
           
-          # Wait for rollout
           kubectl rollout status deployment/client \
             -n "${{ env.NAMESPACE_DEFAULT }}" \
             --timeout=180s || echo "Frontend rollout check failed"
@@ -292,41 +309,47 @@ jobs:
       # ========== VERIFY DEPLOYMENT ==========
       - name: Wait for pods to be ready
         run: |
-          # Wait for backend
           kubectl wait --for=condition=ready pod -l app=server \
             -n "${{ env.NAMESPACE_DEFAULT }}" \
             --timeout=180s || echo "Backend pods not ready"
           
-          # Wait for frontend
           kubectl wait --for=condition=ready pod -l app=client \
             -n "${{ env.NAMESPACE_DEFAULT }}" \
             --timeout=180s || echo "Frontend pods not ready"
           
-          # Wait for MongoDB
           kubectl wait --for=condition=ready pod -l app=mongo \
             -n "${{ env.NAMESPACE_DEFAULT }}" \
             --timeout=120s || echo "MongoDB pods not ready"
 
       # ========== DISPLAY RESULTS ==========
-      - name: Display deployment URLs
+      - name: Display deployment summary
         run: |
-          echo "✅ Deployment Complete!"
-          echo "========================"
+          echo "## 🚀 Deployment Complete!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployment Details:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cluster:** ${{ env.EKS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build Tag:** ${{ env.CI_BUILD_TAG }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Production Tag:** ${{ env.CI_BUILD_TAG }}-prod" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           
-          # Get service URLs
           FRONTEND_URL=$(kubectl get svc client -n "${{ env.NAMESPACE_DEFAULT }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending...")
           BACKEND_URL=$(kubectl get svc server -n "${{ env.NAMESPACE_DEFAULT }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending...")
           
+          echo "**Application URLs:**" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend:** [http://$FRONTEND_URL](http://$FRONTEND_URL)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend API:** [http://$BACKEND_URL:8080](http://$BACKEND_URL:8080)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "**Pod Status:**" >> $GITHUB_STEP_SUMMARY
+          kubectl get pods -n "${{ env.NAMESPACE_DEFAULT }}" -o wide 2>/dev/null | sed 's/^/  /' >> $GITHUB_STEP_SUMMARY || echo "  Unable to get pod status" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "**Monitoring:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Grafana: \`kubectl port-forward svc/monitoring-grafana 3000:80 -n ${{ env.NAMESPACE_MONITOR }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Prometheus: \`kubectl port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090 -n ${{ env.NAMESPACE_MONITOR }}\`" >> $GITHUB_STEP_SUMMARY
+          
+          echo "✅ Deployment Complete!"
           echo "Frontend URL: http://$FRONTEND_URL"
           echo "Backend API URL: http://$BACKEND_URL:8080"
-          echo ""
-          echo "Cluster: ${{ env.EKS_CLUSTER_NAME }}"
-          echo "Region: ${{ env.AWS_REGION }}"
-          echo ""
-          echo "Pod Status:"
-          kubectl get pods -n "${{ env.NAMESPACE_DEFAULT }}" --no-headers | awk '{print "  " $1 ": " $3 " (" $2 ")"}' || echo "  Unable to get pods"
-          echo ""
-          echo "To access monitoring:"
-          echo "  Grafana: kubectl port-forward svc/monitoring-grafana 3000:80 -n ${{ env.NAMESPACE_MONITOR }}"
-          echo "  Prometheus: kubectl port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090 -n ${{ env.NAMESPACE_MONITOR }}"
 
