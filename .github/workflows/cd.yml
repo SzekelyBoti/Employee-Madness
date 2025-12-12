@@ -229,24 +229,37 @@ jobs:
         id: terraform-apply
         working-directory: ./terraform
         run: |
+          # Apply Terraform
           terraform apply -auto-approve -input=false
           
-          # Get Terraform outputs and save them properly
-          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
-          ECR_FRONTEND_URI=$(terraform output -raw ecr_frontend_uri)
-          ECR_BACKEND_URI=$(terraform output -raw ecr_backend_uri)
-          ECR_POPULATE_URI=$(terraform output -raw ecr_populate_uri)
+          # Save outputs to JSON file
+          terraform output -json > terraform_outputs.json
           
-          echo "EKS_CLUSTER_NAME=$EKS_CLUSTER_NAME" >> $GITHUB_ENV
-          echo "ECR_FRONTEND_URI=$ECR_FRONTEND_URI" >> $GITHUB_ENV
-          echo "ECR_BACKEND_URI=$ECR_BACKEND_URI" >> $GITHUB_ENV
-          echo "ECR_POPULATE_URI=$ECR_POPULATE_URI" >> $GITHUB_ENV
+          # Parse with Python (available in GitHub Actions runner)
+          python3 << 'EOF'
+          import json
+          import os
           
-          echo "✅ Terraform outputs saved:"
-          echo "  EKS_CLUSTER_NAME: $EKS_CLUSTER_NAME"
-          echo "  ECR_FRONTEND_URI: $ECR_FRONTEND_URI"
-          echo "  ECR_BACKEND_URI: $ECR_BACKEND_URI"
-          echo "  ECR_POPULATE_URI: $ECR_POPULATE_URI"
+          # Read outputs
+          with open('terraform_outputs.json', 'r') as f:
+            data = json.load(f)
+          
+          # Write to GitHub environment
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+            # Map Terraform outputs to environment variables
+            mappings = {
+              'eks_cluster_name': 'EKS_CLUSTER_NAME',
+              'ecr_frontend_uri': 'ECR_FRONTEND_URI',
+              'ecr_backend_uri': 'ECR_BACKEND_URI',
+              'ecr_populate_uri': 'ECR_POPULATE_URI'
+            }
+          
+            for tf_key, env_var in mappings.items():
+              if tf_key in data:
+                value = data[tf_key]['value']
+                f.write(f"{env_var}={value}\n")
+                print(f"✅ Set {env_var}={value}")
+          EOF
 
       # ========== SET ENVIRONMENT VARIABLES FOR EXISTING CLUSTER ==========
       - name: Get ECR URIs for existing cluster
