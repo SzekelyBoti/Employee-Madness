@@ -231,35 +231,31 @@ jobs:
         run: |
           # Apply Terraform
           terraform apply -auto-approve -input=false
-          
-          # Save outputs to JSON file
-          terraform output -json > terraform_outputs.json
-          
-          # Parse with Python (available in GitHub Actions runner)
-          python3 << 'EOF'
-          import json
-          import os
-          
-          # Read outputs
-          with open('terraform_outputs.json', 'r') as f:
-            data = json.load(f)
-          
-          # Write to GitHub environment
-          with open(os.environ['GITHUB_ENV'], 'a') as f:
-            # Map Terraform outputs to environment variables
-            mappings = {
-              'eks_cluster_name': 'EKS_CLUSTER_NAME',
-              'ecr_frontend_uri': 'ECR_FRONTEND_URI',
-              'ecr_backend_uri': 'ECR_BACKEND_URI',
-              'ecr_populate_uri': 'ECR_POPULATE_URI'
-            }
-          
-            for tf_key, env_var in mappings.items():
-              if tf_key in data:
-                value = data[tf_key]['value']
-                f.write(f"{env_var}={value}\n")
-                print(f"✅ Set {env_var}={value}")
-          EOF
+
+          # Get outputs directly (with fallbacks)
+          echo "Getting Terraform outputs..."
+
+          # Use command substitution with error handling
+          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "employee-madness-cluster")
+          ECR_FRONTEND_URI=$(terraform output -raw ecr_frontend_uri 2>/dev/null || echo "")
+          ECR_BACKEND_URI=$(terraform output -raw ecr_backend_uri 2>/dev/null || echo "")
+          ECR_POPULATE_URI=$(terraform output -raw ecr_populate_uri 2>/dev/null || echo "")
+
+          # Set environment variables
+          echo "EKS_CLUSTER_NAME=$EKS_CLUSTER_NAME" >> $GITHUB_ENV
+          echo "ECR_FRONTEND_URI=$ECR_FRONTEND_URI" >> $GITHUB_ENV
+          echo "ECR_BACKEND_URI=$ECR_BACKEND_URI" >> $GITHUB_ENV
+          echo "ECR_POPULATE_URI=$ECR_POPULATE_URI" >> $GITHUB_ENV
+
+          # Also set as step outputs if needed
+          echo "cluster_name=$EKS_CLUSTER_NAME" >> $GITHUB_OUTPUT
+          echo "frontend_uri=$ECR_FRONTEND_URI" >> $GITHUB_OUTPUT
+
+          echo "✅ Terraform outputs:"
+          echo "  Cluster: $EKS_CLUSTER_NAME"
+          echo "  Frontend ECR: $ECR_FRONTEND_URI"
+          echo "  Backend ECR: $ECR_BACKEND_URI"
+          echo "  Populate ECR: $ECR_POPULATE_URI"
 
       # ========== SET ENVIRONMENT VARIABLES FOR EXISTING CLUSTER ==========
       - name: Get ECR URIs for existing cluster
@@ -293,26 +289,28 @@ jobs:
       - name: Set final deployment variables
         run: |
           echo "=== Final Deployment Variables ==="
-          echo "EKS_CLUSTER_NAME: ${{ env.EKS_CLUSTER_NAME }}"
-          echo "ECR_FRONTEND_URI: ${{ env.ECR_FRONTEND_URI }}"
-          echo "ECR_BACKEND_URI: ${{ env.ECR_BACKEND_URI }}"
-          echo "ECR_POPULATE_URI: ${{ env.ECR_POPULATE_URI }}"
-          
+          echo "EKS_CLUSTER_NAME: $EKS_CLUSTER_NAME"
+          echo "ECR_FRONTEND_URI: $ECR_FRONTEND_URI"
+          echo "ECR_BACKEND_URI: $ECR_BACKEND_URI"
+          echo "ECR_POPULATE_URI: $ECR_POPULATE_URI"
+            
           # Validate that required variables are set
-          if [ -z "${{ env.EKS_CLUSTER_NAME }}" ]; then
+          if [ -z "$EKS_CLUSTER_NAME" ]; then
             echo "ERROR: EKS_CLUSTER_NAME is not set"
             exit 1
           fi
-          
-          if [ -z "${{ env.ECR_FRONTEND_URI }}" ]; then
+            
+          if [ -z "$ECR_FRONTEND_URI" ]; then
             echo "ERROR: ECR_FRONTEND_URI is not set"
             exit 1
           fi
-          
-          if [ -z "${{ env.ECR_BACKEND_URI }}" ]; then
+            
+          if [ -z "$ECR_BACKEND_URI" ]; then
             echo "ERROR: ECR_BACKEND_URI is not set"
             exit 1
           fi
+            
+          echo "✅ All required variables are set"
 
       # ========== VERIFY KUBECTL ACCESS ==========
       - name: Verify kubectl access
