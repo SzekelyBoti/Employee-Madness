@@ -23,6 +23,7 @@ jobs:
       NAMESPACE_MONITOR: monitoring
       FRONTEND_ECR_NAME: employee-madness-frontend
       BACKEND_ECR_NAME: employee-madness-backend
+      POPULATE_ECR_NAME: employee-madness-populate
 
     steps:
       - name: Checkout code
@@ -79,9 +80,11 @@ jobs:
       - name: Setup ECR repositories
         id: ecr-setup
         run: |
+          # Function to create or get ECR repository
           setup_ecr() {
             local repo_name=$1
             local output_var=$2
+            local env_var=$3
           
             if aws ecr describe-repositories --repository-names "$repo_name" > /dev/null 2>&1; then
               echo "ECR repository '$repo_name' exists"
@@ -92,10 +95,14 @@ jobs:
               REPO_URI=$(aws ecr describe-repositories --repository-names "$repo_name" --query 'repositories[0].repositoryUri' --output text)
             fi
             echo "$output_var=$REPO_URI" >> $GITHUB_OUTPUT
+            if [ -n "$env_var" ]; then
+              echo "$env_var=$REPO_URI" >> $GITHUB_ENV
+            fi
           }
           
-          setup_ecr "${{ env.FRONTEND_ECR_NAME }}" "FRONTEND_ECR_URI"
-          setup_ecr "${{ env.BACKEND_ECR_NAME }}" "BACKEND_ECR_URI"
+          setup_ecr "${{ env.FRONTEND_ECR_NAME }}" "FRONTEND_ECR_URI" "ECR_FRONTEND_URI"
+          setup_ecr "${{ env.BACKEND_ECR_NAME }}" "BACKEND_ECR_URI" "ECR_BACKEND_URI"
+          setup_ecr "${{ env.POPULATE_ECR_NAME }}" "POPULATE_ECR_URI" "ECR_POPULATE_URI"
 
       # ========== EKS CLUSTER CHECK ==========
       - name: Check EKS cluster status
@@ -128,31 +135,62 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
-      - name: Import existing AWS resources
+      - name: Import ALL existing AWS resources
         if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
         working-directory: ./terraform
         run: |
-          echo "Importing existing AWS resources..."
+          echo "🔧 Importing ALL existing AWS resources into Terraform..."
+          echo "=========================================================="
           
-          # Import ECR repositories
-          terraform import aws_ecr_repository.frontend "${{ env.FRONTEND_ECR_NAME }}" || echo "Frontend ECR import failed or already in state"
-          terraform import aws_ecr_repository.backend "${{ env.BACKEND_ECR_NAME }}" || echo "Backend ECR import failed or already in state"
+          # Function to safely import any resource
+          safe_import() {
+            local tf_address=$1
+            local aws_id=$2
+            local resource_type=$3
           
-          # Import IAM roles if they exist
+            echo "Checking: $tf_address"
+            if [ -n "$aws_id" ] && [ "$aws_id" != "None" ]; then
+              echo "  → Importing: $aws_id"
+              terraform import "$tf_address" "$aws_id" 2>/dev/null && echo "    ✅ Success" || echo "    ⚠️  Failed (may already be in state)"
+            else
+              echo "  → Does not exist"
+            fi
+          }
+          
+          # 1. Import ECR Repositories
+          echo ""
+          echo "1. Importing ECR Repositories..."
+          ECR_REPOS=$(aws ecr describe-repositories --query 'repositories[].repositoryName' --output text 2>/dev/null || echo "")
+          for REPO in $ECR_REPOS; do
+            if [[ $REPO == employee-madness-* ]]; then
+              TF_NAME="${REPO#employee-madness-}"
+              safe_import "aws_ecr_repository.$TF_NAME" "$REPO" "ECR"
+            fi
+          done
+          
+          # 2. Import IAM Roles
+          echo ""
+          echo "2. Importing IAM Roles..."
+          IAM_ROLES=$(aws iam list-roles --query 'Roles[].RoleName' --output text 2>/dev/null || echo "")
+          for ROLE in $IAM_ROLES; do
+            if [[ $ROLE == employee-madness-* ]]; then
+              TF_NAME="${ROLE#employee-madness-cluster-}"
+              TF_NAME="${TF_NAME%-role}"
+              safe_import "aws_iam_role.${TF_NAME}_role" "$ROLE" "IAM"
+            fi
+          done
+          
+          # Import IAM policy attachments (these are separate resources in Terraform)
+          echo ""
+          echo "3. Importing IAM Policy Attachments..."
           if aws iam get-role --role-name employee-madness-cluster-eks-role > /dev/null 2>&1; then
-            echo "Importing existing IAM role: employee-madness-cluster-eks-role"
-            terraform import aws_iam_role.eks_role employee-madness-cluster-eks-role || echo "EKS role import failed or already in state"
-          
-            # Import EKS role policy attachments
+            echo "Importing EKS role policy attachments..."
             terraform import aws_iam_role_policy_attachment.eks_cluster_policy \
               "employee-madness-cluster-eks-role/arn:aws:iam::aws:policy/AmazonEKSClusterPolicy" || echo "EKS policy import failed"
           fi
           
           if aws iam get-role --role-name employee-madness-cluster-node-role > /dev/null 2>&1; then
-            echo "Importing existing IAM role: employee-madness-cluster-node-role"
-            terraform import aws_iam_role.node_role employee-madness-cluster-node-role || echo "Node role import failed or already in state"
-          
-            # Import node role policy attachments
+            echo "Importing node role policy attachments..."
             terraform import aws_iam_role_policy_attachment.eks_node_policy_attach \
               "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy" || echo "Node policy import failed"
             terraform import aws_iam_role_policy_attachment.cni_policy_attach \
@@ -165,17 +203,60 @@ jobs:
               "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly" || echo "ECR policy import failed"
           fi
           
-          # Import EKS cluster if it exists
+          # 4. Import EKS Cluster
+          echo ""
+          echo "4. Importing EKS Cluster..."
           if aws eks describe-cluster --name "${{ env.CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
-            echo "Importing existing EKS cluster: ${{ env.CLUSTER_NAME }}"
-            terraform import aws_eks_cluster.my_cluster "${{ env.CLUSTER_NAME }}" || echo "EKS cluster import failed or already in state"
+            safe_import "aws_eks_cluster.my_cluster" "${{ env.CLUSTER_NAME }}" "EKS"
+          
+            # Import node groups
+            NODE_GROUPS=$(aws eks list-nodegroups --cluster-name "${{ env.CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" --query 'nodegroups' --output text 2>/dev/null || echo "")
+            for NG in $NODE_GROUPS; do
+              safe_import "aws_eks_node_group.node_group" "${{ env.CLUSTER_NAME }}:$NG" "EKS Node Group"
+            done
           fi
           
-          # Import node group if it exists
-          if aws eks describe-nodegroup --cluster-name "${{ env.CLUSTER_NAME }}" --nodegroup-name "${CLUSTER_NAME}-nodegroup" --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
-            echo "Importing existing node group..."
-            terraform import aws_eks_node_group.node_group "${{ env.CLUSTER_NAME }}:${CLUSTER_NAME}-nodegroup" || echo "Node group import failed"
+          # 5. Import VPC and Networking
+          echo ""
+          echo "5. Importing VPC and Networking..."
+          VPC_ID=$(aws ec2 describe-vpcs --region "${{ env.AWS_REGION }}" --filters "Name=tag:Name,Values=*employee-madness*" --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
+          safe_import "aws_vpc.eks_vpc" "$VPC_ID" "VPC"
+          
+          # Import subnets
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            SUBNETS=$(aws ec2 describe-subnets --region "${{ env.AWS_REGION }}" --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[].[SubnetId,Tags[?Key==`Name`].Value[]]' --output text 2>/dev/null || echo "")
+          
+            COUNT=0
+            while IFS=$'\t' read -r SUBNET_ID SUBNET_NAME; do
+              COUNT=$((COUNT+1))
+              if [[ $SUBNET_NAME == *employee-madness* ]] || [ -n "$SUBNET_ID" ]; then
+                LETTER=$([ $COUNT -eq 1 ] && echo "a" || echo "b")
+                safe_import "aws_subnet.eks_subnet_public_$LETTER" "$SUBNET_ID" "Subnet"
+              fi
+            done <<< "$SUBNETS"
           fi
+          
+          # 6. Import Security Groups
+          echo ""
+          echo "6. Importing Security Groups..."
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            SG_ID=$(aws ec2 describe-security-groups --region "${{ env.AWS_REGION }}" --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=*employee-madness*" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            safe_import "aws_security_group.eks_sg" "$SG_ID" "Security Group"
+          fi
+          
+          # 7. Import Internet Gateway
+          echo ""
+          echo "7. Importing Internet Gateway..."
+          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
+            IG_ID=$(aws ec2 describe-internet-gateways --region "${{ env.AWS_REGION }}" --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[0].InternetGatewayId' --output text 2>/dev/null || echo "")
+            safe_import "aws_internet_gateway.eks_igw" "$IG_ID" "Internet Gateway"
+          fi
+          
+          echo ""
+          echo "✅ Import process complete!"
+          echo ""
+          echo "Current Terraform state:"
+          terraform state list
 
       - name: Apply Terraform
         if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
@@ -194,8 +275,10 @@ jobs:
             echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
           fi
           
-          echo "ECR_FRONTEND_URI=${{ steps.ecr-setup.outputs.FRONTEND_ECR_URI }}" >> $GITHUB_ENV
-          echo "ECR_BACKEND_URI=${{ steps.ecr-setup.outputs.BACKEND_ECR_URI }}" >> $GITHUB_ENV
+          # Set ECR URIs (already set in ecr-setup step, but ensure they're set)
+          echo "ECR_FRONTEND_URI=${{ env.ECR_FRONTEND_URI }}" >> $GITHUB_ENV
+          echo "ECR_BACKEND_URI=${{ env.ECR_BACKEND_URI }}" >> $GITHUB_ENV
+          echo "ECR_POPULATE_URI=${{ env.ECR_POPULATE_URI }}" >> $GITHUB_ENV
           
           if [ -z "${{ env.EKS_CLUSTER_NAME }}" ]; then
             echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
