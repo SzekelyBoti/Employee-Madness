@@ -128,13 +128,59 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
+      - name: Import existing AWS resources
+        if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
+        working-directory: ./terraform
+        run: |
+          echo "Importing existing AWS resources..."
+          
+          # Import ECR repositories
+          terraform import aws_ecr_repository.frontend "${{ env.FRONTEND_ECR_NAME }}" || echo "Frontend ECR import failed or already in state"
+          terraform import aws_ecr_repository.backend "${{ env.BACKEND_ECR_NAME }}" || echo "Backend ECR import failed or already in state"
+          
+          # Import IAM roles if they exist
+          if aws iam get-role --role-name employee-madness-cluster-eks-role > /dev/null 2>&1; then
+            echo "Importing existing IAM role: employee-madness-cluster-eks-role"
+            terraform import aws_iam_role.eks_role employee-madness-cluster-eks-role || echo "EKS role import failed or already in state"
+          
+            # Import EKS role policy attachments
+            terraform import aws_iam_role_policy_attachment.eks_cluster_policy \
+              "employee-madness-cluster-eks-role/arn:aws:iam::aws:policy/AmazonEKSClusterPolicy" || echo "EKS policy import failed"
+          fi
+          
+          if aws iam get-role --role-name employee-madness-cluster-node-role > /dev/null 2>&1; then
+            echo "Importing existing IAM role: employee-madness-cluster-node-role"
+            terraform import aws_iam_role.node_role employee-madness-cluster-node-role || echo "Node role import failed or already in state"
+          
+            # Import node role policy attachments
+            terraform import aws_iam_role_policy_attachment.eks_node_policy_attach \
+              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy" || echo "Node policy import failed"
+            terraform import aws_iam_role_policy_attachment.cni_policy_attach \
+              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy" || echo "CNI policy import failed"
+            terraform import aws_iam_role_policy_attachment.ssm_policy_attach \
+              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" || echo "SSM policy import failed"
+            terraform import aws_iam_role_policy_attachment.cloudwatch_policy_attach \
+              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy" || echo "CloudWatch policy import failed"
+            terraform import aws_iam_role_policy_attachment.ecr_readonly_attach \
+              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly" || echo "ECR policy import failed"
+          fi
+          
+          # Import EKS cluster if it exists
+          if aws eks describe-cluster --name "${{ env.CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
+            echo "Importing existing EKS cluster: ${{ env.CLUSTER_NAME }}"
+            terraform import aws_eks_cluster.my_cluster "${{ env.CLUSTER_NAME }}" || echo "EKS cluster import failed or already in state"
+          fi
+          
+          # Import node group if it exists
+          if aws eks describe-nodegroup --cluster-name "${{ env.CLUSTER_NAME }}" --nodegroup-name "${CLUSTER_NAME}-nodegroup" --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
+            echo "Importing existing node group..."
+            terraform import aws_eks_node_group.node_group "${{ env.CLUSTER_NAME }}:${CLUSTER_NAME}-nodegroup" || echo "Node group import failed"
+          fi
+
       - name: Apply Terraform
         if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
         working-directory: ./terraform
         run: |
-          terraform import aws_ecr_repository.frontend "${{ env.FRONTEND_ECR_NAME }}" || echo "Frontend ECR not in Terraform state"
-          terraform import aws_ecr_repository.backend "${{ env.BACKEND_ECR_NAME }}" || echo "Backend ECR not in Terraform state"
-          
           terraform apply -auto-approve -input=false
           
           EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ env.CLUSTER_NAME }}")
