@@ -257,37 +257,27 @@ jobs:
         run: |
           # Apply Terraform
           terraform apply -auto-approve -input=false
-          
-          # Simple fallback for cluster name
-          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ env.CLUSTER_NAME }}")
-          echo "EKS_CLUSTER_NAME=$EKS_CLUSTER_NAME" >> $GITHUB_ENV
-          
+            
+          # Don't read from terraform output - just use the known name
           echo "✅ Terraform applied successfully"
-          echo "Cluster name set to: $EKS_CLUSTER_NAME"
+          # No need to set EKS_CLUSTER_NAME here - it will be set in next step
 
       # ========== SET ENVIRONMENT VARIABLES ==========
       - name: Set deployment variables
         run: |
-          # Set ECR URIs from ecr-setup step
+          # Always use the predefined cluster name
+          echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
+          
+          # Set ECR URIs
           echo "ECR_FRONTEND_URI=${{ steps.ecr-setup.outputs.ECR_FRONTEND_URI }}" >> $GITHUB_ENV
           echo "ECR_BACKEND_URI=${{ steps.ecr-setup.outputs.ECR_BACKEND_URI }}" >> $GITHUB_ENV
           echo "ECR_POPULATE_URI=${{ steps.ecr-setup.outputs.ECR_POPULATE_URI }}" >> $GITHUB_ENV
           
-          # Set cluster name
-          if [ -z "$EKS_CLUSTER_NAME" ]; then
-            if [ "${{ steps.eks-check.outputs.CLUSTER_EXISTS }}" = "true" ]; then
-              echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
-            else
-              # Should already be set by Terraform step, but fallback
-              echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
-            fi
-          fi
-          
           echo "=== Deployment Variables ==="
-          echo "EKS_CLUSTER_NAME: ${{ env.EKS_CLUSTER_NAME }}"
-          echo "ECR_FRONTEND_URI: ${{ env.ECR_FRONTEND_URI }}"
-          echo "ECR_BACKEND_URI: ${{ env.ECR_BACKEND_URI }}"
-          echo "ECR_POPULATE_URI: ${{ env.ECR_POPULATE_URI }}"
+          echo "EKS_CLUSTER_NAME: ${{ env.CLUSTER_NAME }}"
+          echo "ECR_FRONTEND_URI: ${{ steps.ecr-setup.outputs.ECR_FRONTEND_URI }}"
+          echo "ECR_BACKEND_URI: ${{ steps.ecr-setup.outputs.ECR_BACKEND_URI }}"
+          echo "ECR_POPULATE_URI: ${{ steps.ecr-setup.outputs.ECR_POPULATE_URI }}"
 
       # ========== VERIFY KUBECTL ACCESS ==========
       - name: Verify kubectl access
