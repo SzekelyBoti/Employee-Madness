@@ -21,9 +21,6 @@ jobs:
       CLUSTER_NAME: employee-madness-cluster
       NAMESPACE_DEFAULT: default
       NAMESPACE_MONITOR: monitoring
-      FRONTEND_ECR_NAME: employee-madness-frontend
-      BACKEND_ECR_NAME: employee-madness-backend
-      POPULATE_ECR_NAME: employee-madness-populate
 
     steps:
       - name: Checkout code
@@ -75,34 +72,6 @@ jobs:
           # Verify installations
           kubectl version --client
           helm version
-
-      # ========== ECR SETUP ==========
-      - name: Setup ECR repositories
-        id: ecr-setup
-        run: |
-          # Function to create or get ECR repository
-          setup_ecr() {
-            local repo_name=$1
-            local output_var=$2
-            local env_var=$3
-          
-            if aws ecr describe-repositories --repository-names "$repo_name" > /dev/null 2>&1; then
-              echo "ECR repository '$repo_name' exists"
-              REPO_URI=$(aws ecr describe-repositories --repository-names "$repo_name" --query 'repositories[0].repositoryUri' --output text)
-            else
-              echo "Creating ECR repository '$repo_name'..."
-              aws ecr create-repository --repository-name "$repo_name" --region ${{ env.AWS_REGION }}
-              REPO_URI=$(aws ecr describe-repositories --repository-names "$repo_name" --query 'repositories[0].repositoryUri' --output text)
-            fi
-            echo "$output_var=$REPO_URI" >> $GITHUB_OUTPUT
-            if [ -n "$env_var" ]; then
-              echo "$env_var=$REPO_URI" >> $GITHUB_ENV
-            fi
-          }
-          
-          setup_ecr "${{ env.FRONTEND_ECR_NAME }}" "FRONTEND_ECR_URI" "ECR_FRONTEND_URI"
-          setup_ecr "${{ env.BACKEND_ECR_NAME }}" "BACKEND_ECR_URI" "ECR_BACKEND_URI"
-          setup_ecr "${{ env.POPULATE_ECR_NAME }}" "POPULATE_ECR_URI" "ECR_POPULATE_URI"
 
       # ========== EKS CLUSTER CHECK ==========
       - name: Check EKS cluster status
@@ -180,7 +149,7 @@ jobs:
             fi
           done
           
-          # Import IAM policy attachments (these are separate resources in Terraform)
+          # Import IAM policy attachments
           echo ""
           echo "3. Importing IAM Policy Attachments..."
           if aws iam get-role --role-name employee-madness-cluster-eks-role > /dev/null 2>&1; then
@@ -254,34 +223,82 @@ jobs:
           
           echo ""
           echo "✅ Import process complete!"
-          echo ""
-          echo "Current Terraform state:"
-          terraform state list
 
       - name: Apply Terraform
         if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
+        id: terraform-apply
         working-directory: ./terraform
         run: |
           terraform apply -auto-approve -input=false
           
-          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "${{ env.CLUSTER_NAME }}")
+          # Get Terraform outputs and save them properly
+          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name)
+          ECR_FRONTEND_URI=$(terraform output -raw ecr_frontend_uri)
+          ECR_BACKEND_URI=$(terraform output -raw ecr_backend_uri)
+          ECR_POPULATE_URI=$(terraform output -raw ecr_populate_uri)
+          
           echo "EKS_CLUSTER_NAME=$EKS_CLUSTER_NAME" >> $GITHUB_ENV
+          echo "ECR_FRONTEND_URI=$ECR_FRONTEND_URI" >> $GITHUB_ENV
+          echo "ECR_BACKEND_URI=$ECR_BACKEND_URI" >> $GITHUB_ENV
+          echo "ECR_POPULATE_URI=$ECR_POPULATE_URI" >> $GITHUB_ENV
+          
+          echo "✅ Terraform outputs saved:"
+          echo "  EKS_CLUSTER_NAME: $EKS_CLUSTER_NAME"
+          echo "  ECR_FRONTEND_URI: $ECR_FRONTEND_URI"
+          echo "  ECR_BACKEND_URI: $ECR_BACKEND_URI"
+          echo "  ECR_POPULATE_URI: $ECR_POPULATE_URI"
 
-      # ========== SET ENVIRONMENT VARIABLES ==========
-      - name: Set deployment variables
+      # ========== SET ENVIRONMENT VARIABLES FOR EXISTING CLUSTER ==========
+      - name: Get ECR URIs for existing cluster
+        if: steps.eks-check.outputs.CLUSTER_EXISTS == 'true'
+        id: get-ecr-uris
         run: |
-          if [ "${{ steps.eks-check.outputs.CLUSTER_EXISTS }}" = "true" ]; then
-            echo "Using existing cluster: ${{ env.CLUSTER_NAME }}"
-            echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
+          echo "Getting ECR URIs for existing cluster..."
+          
+          # Function to get ECR URI
+          get_ecr_uri() {
+            local repo_name=$1
+            local output_var=$2
+          
+            if aws ecr describe-repositories --repository-names "$repo_name" > /dev/null 2>&1; then
+              REPO_URI=$(aws ecr describe-repositories --repository-names "$repo_name" --query 'repositories[0].repositoryUri' --output text)
+              echo "$output_var=$REPO_URI" >> $GITHUB_OUTPUT
+              echo "$output_var=$REPO_URI" >> $GITHUB_ENV
+            else
+              echo "$output_var=" >> $GITHUB_OUTPUT
+              echo "WARNING: ECR repository '$repo_name' not found"
+            fi
+          }
+          
+          get_ecr_uri "employee-madness-frontend" "ECR_FRONTEND_URI"
+          get_ecr_uri "employee-madness-backend" "ECR_BACKEND_URI"
+          get_ecr_uri "employee-madness-populate" "ECR_POPULATE_URI"
+          
+          echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
+
+      # ========== SET FINAL ENVIRONMENT VARIABLES ==========
+      - name: Set final deployment variables
+        run: |
+          echo "=== Final Deployment Variables ==="
+          echo "EKS_CLUSTER_NAME: ${{ env.EKS_CLUSTER_NAME }}"
+          echo "ECR_FRONTEND_URI: ${{ env.ECR_FRONTEND_URI }}"
+          echo "ECR_BACKEND_URI: ${{ env.ECR_BACKEND_URI }}"
+          echo "ECR_POPULATE_URI: ${{ env.ECR_POPULATE_URI }}"
+          
+          # Validate that required variables are set
+          if [ -z "${{ env.EKS_CLUSTER_NAME }}" ]; then
+            echo "ERROR: EKS_CLUSTER_NAME is not set"
+            exit 1
           fi
           
-          # Set ECR URIs (already set in ecr-setup step, but ensure they're set)
-          echo "ECR_FRONTEND_URI=${{ env.ECR_FRONTEND_URI }}" >> $GITHUB_ENV
-          echo "ECR_BACKEND_URI=${{ env.ECR_BACKEND_URI }}" >> $GITHUB_ENV
-          echo "ECR_POPULATE_URI=${{ env.ECR_POPULATE_URI }}" >> $GITHUB_ENV
+          if [ -z "${{ env.ECR_FRONTEND_URI }}" ]; then
+            echo "ERROR: ECR_FRONTEND_URI is not set"
+            exit 1
+          fi
           
-          if [ -z "${{ env.EKS_CLUSTER_NAME }}" ]; then
-            echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
+          if [ -z "${{ env.ECR_BACKEND_URI }}" ]; then
+            echo "ERROR: ECR_BACKEND_URI is not set"
+            exit 1
           fi
 
       # ========== VERIFY KUBECTL ACCESS ==========
