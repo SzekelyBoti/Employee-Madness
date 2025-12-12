@@ -231,26 +231,21 @@ jobs:
         run: |
           # Apply Terraform
           terraform apply -auto-approve -input=false
-
-          # Get outputs directly (with fallbacks)
+            
           echo "Getting Terraform outputs..."
-
-          # Use command substitution with error handling
-          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>/dev/null || echo "employee-madness-cluster")
-          ECR_FRONTEND_URI=$(terraform output -raw ecr_frontend_uri 2>/dev/null || echo "")
-          ECR_BACKEND_URI=$(terraform output -raw ecr_backend_uri 2>/dev/null || echo "")
-          ECR_POPULATE_URI=$(terraform output -raw ecr_populate_uri 2>/dev/null || echo "")
-
+            
+          # Get and clean outputs in one go
+          EKS_CLUSTER_NAME=$(terraform output -raw eks_cluster_name 2>&1 | tail -n1 | cut -d':' -f1)
+          ECR_FRONTEND_URI=$(terraform output -raw ecr_frontend_uri 2>&1 | tail -n1 | cut -d':' -f1)
+          ECR_BACKEND_URI=$(terraform output -raw ecr_backend_uri 2>&1 | tail -n1 | cut -d':' -f1)
+          ECR_POPULATE_URI=$(terraform output -raw ecr_populate_uri 2>&1 | tail -n1 | cut -d':' -f1)
+            
           # Set environment variables
           echo "EKS_CLUSTER_NAME=$EKS_CLUSTER_NAME" >> $GITHUB_ENV
           echo "ECR_FRONTEND_URI=$ECR_FRONTEND_URI" >> $GITHUB_ENV
           echo "ECR_BACKEND_URI=$ECR_BACKEND_URI" >> $GITHUB_ENV
           echo "ECR_POPULATE_URI=$ECR_POPULATE_URI" >> $GITHUB_ENV
-
-          # Also set as step outputs if needed
-          echo "cluster_name=$EKS_CLUSTER_NAME" >> $GITHUB_OUTPUT
-          echo "frontend_uri=$ECR_FRONTEND_URI" >> $GITHUB_OUTPUT
-
+            
           echo "✅ Terraform outputs:"
           echo "  Cluster: $EKS_CLUSTER_NAME"
           echo "  Frontend ECR: $ECR_FRONTEND_URI"
