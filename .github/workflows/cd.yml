@@ -118,7 +118,7 @@ jobs:
             echo "CLUSTER_EXISTS=false" >> $GITHUB_OUTPUT
           fi
 
-      # ========== TERRAFORM (Only if needed) ==========
+      # ========== TERRAFORM ==========
       - name: Setup Terraform
         if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
         uses: hashicorp/setup-terraform@v2

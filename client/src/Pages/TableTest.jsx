@@ -1,13 +1,22 @@
+/**
+ * @brief Component for testing table rendering and styling.
+ *
+ * This is a simple test component that renders a static HTML table
+ * with sample data. It's used during development to verify table
+ * styling, layout, and rendering behavior without fetching actual data.
+ *
+ * @returns {JSX.Element} A static table with sample rows and columns.
+ */
 const TableTest = () => (
-  <table>
-    <thead>
+    <table>
+      <thead>
       <tr>
         <th>Col 1</th>
         <th>Col 2</th>
         <th>Col 3</th>
       </tr>
-    </thead>
-    <tbody>
+      </thead>
+      <tbody>
       <tr>
         <td>Val 1</td>
         <td>Val 2</td>
@@ -33,8 +42,8 @@ const TableTest = () => (
         <td>Val 14</td>
         <td>Val 15</td>
       </tr>
-    </tbody>
-  </table>
+      </tbody>
+    </table>
 );
 
 export default TableTest;
