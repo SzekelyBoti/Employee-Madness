@@ -3,7 +3,7 @@
 <br />
 <div align="center">
   <a href="https://github.com/SzekelyBoti/Employee-Madness">
-    <img src="Images/app.png" alt="Logo" width="500" height="500">
+    <img src="Images/employee.png" alt="Logo" width="500" height="500">
   </a>
 
 <h3 align="center">🏢 Employee Madness</h3>
