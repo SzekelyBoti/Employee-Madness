@@ -420,6 +420,11 @@ jobs:
             --create-namespace \
             --set grafana.adminPassword=admin \
             --wait --timeout=300s
+      # ========== DEPLOY MONITORING RESOURCES ==========
+      - name: Deploy backend monitoring
+        run: |
+          kubectl apply -f k8s/server-service.yaml
+          kubectl apply -f k8s/server-monitor.yaml
 
       # ========== POPULATE DATABASE ==========
       - name: Populate database
@@ -470,6 +475,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           
           echo "**Monitoring:**" >> $GITHUB_STEP_SUMMARY
+          echo "aws eks update-kubeconfig \--region eu-north-1 \--name employee-madness-cluster"
           echo "- Grafana: \`kubectl port-forward svc/monitoring-grafana 3000:80 -n ${{ env.NAMESPACE_MONITOR }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Prometheus: \`kubectl port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090 -n ${{ env.NAMESPACE_MONITOR }}\`" >> $GITHUB_STEP_SUMMARY
           
