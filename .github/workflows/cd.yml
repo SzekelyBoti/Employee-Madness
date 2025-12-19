@@ -481,4 +481,4 @@ jobs:
           
           echo "✅ Deployment Complete!"
           echo "Frontend URL: http://$FRONTEND_URL"
-          echo "Backend API URL: http://$BACKEND_URL:8080"  
+          echo "Backend API URL: http://$BACKEND_URL:8080"   
