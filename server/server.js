@@ -11,6 +11,7 @@ const FavoriteBrandModel = require("./db/favoriteBrands.model");
 const WorkingGroupModel = require("./db/workingGroup.model");
 
 // Get environment variables with defaults
+const IS_TEST = process.env.NODE_ENV === "test";
 const { MONGO_URL, PORT = 8080 } = process.env;
 
 /**
@@ -20,7 +21,7 @@ const { MONGO_URL, PORT = 8080 } = process.env;
  * the environment variables. This prevents server startup with
  * invalid or missing configuration.
  */
-if (!MONGO_URL) {
+if (!MONGO_URL && !IS_TEST) {
   console.error("Missing MONGO_URL environment variable");
   process.exit(1);
 }
@@ -429,23 +430,31 @@ app.use((err, req, res, next) => {
  */
 const start = async () => {
   try {
-    // Connect to MongoDB
-    await mongoose.connect(MONGO_URL, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
-    console.log("Connected to MongoDB");
+    if (!IS_TEST) {
+      await mongoose.connect(MONGO_URL, {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+      });
+      console.log("Connected to MongoDB");
 
-    // Start Express server
-    app.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-    });
+      app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+      });
+    }
   } catch (err) {
     console.error("Failed to start server:", err);
-    process.exit(1);
+    if (!IS_TEST) {
+      process.exit(1);
+    } else {
+      throw err;
+    }
   }
 };
 
 // Start the application
-start();
+if (!IS_TEST) {
+  start();
+}
+
+module.exports = { app };
 
