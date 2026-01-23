@@ -62,6 +62,10 @@ app.get("/metrics", async (req, res) => {
   res.end(await client.register.metrics());
 });
 
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "OK" });
+});
+
 // ----------------------- Employee Routes -----------------------
 
 /**
@@ -164,6 +168,8 @@ app.post("/api/employees", async (req, res, next) => {
   }
 });
 
+app.get("/error-test", (req, res, next) => next(new Error("Test error")));
+
 /**
  * @brief Updates an existing employee record.
  *
@@ -179,23 +185,38 @@ app.post("/api/employees", async (req, res, next) => {
 app.patch("/api/employees/:id", async (req, res, next) => {
   try {
     const { workingGroup, ...update } = req.body;
+    const { id } = req.params;
 
-    // Handle working group assignment/removal
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ error: "Invalid employee ID" });
+    }
+
+    // Handle level numeric casting
+    if (update.level !== undefined) update.level = Number(update.level);
+
+    // Handle working group
     if (workingGroup === "") {
       update.workingGroup = null;
     } else if (workingGroup) {
+      if (!mongoose.Types.ObjectId.isValid(workingGroup)) {
+        return res.status(400).json({ error: "Invalid workingGroup ID" });
+      }
       update.workingGroup = mongoose.Types.ObjectId(workingGroup);
     }
 
-    // Update employee document
-    const employee = await EmployeeModel.findByIdAndUpdate(
-        req.params.id,
-        update,
-        { new: true }
+    // Update employee and ensure we always get a populated object
+    let employee = await EmployeeModel.findByIdAndUpdate(
+        id,
+        { $set: update },
+        { new: true, runValidators: true }
     ).populate("workingGroup");
 
-    // Add employee to working group if assignment was provided
-    if (workingGroup) {
+    if (!employee) {
+      return res.status(404).json({ error: "Employee not found" });
+    }
+
+    // Add to working group only if valid
+    if (workingGroup && update.workingGroup) {
       await WorkingGroupModel.findByIdAndUpdate(workingGroup, {
         $addToSet: { employees: employee._id },
       });
@@ -451,7 +472,6 @@ const start = async () => {
   }
 };
 
-// Start the application
 if (!IS_TEST) {
   start();
 }

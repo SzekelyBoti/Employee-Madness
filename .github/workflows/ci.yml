@@ -19,6 +19,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Run backend tests with coverage
+        run: |
+          cd server
+          npm ci
+          npm test -- --coverage
+
       - name: Build frontend
         run: |
           cd client
