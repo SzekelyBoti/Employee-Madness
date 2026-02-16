@@ -1,0 +1,19 @@
+﻿apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.app.name }}-populate
+  namespace: {{ .Values.namespace.default }}
+spec:
+  template:
+    spec:
+      containers:
+        - name: populate-script
+          image: "{{ .Values.server.image.repository }}:{{ .Values.server.image.tag }}"
+          command: ["node", "populate/populate.js"]
+          env:
+            - name: MONGO_URL
+              value: "mongodb://{{ .Values.app.name }}-mongo:{{ .Values.mongo.port }}/{{ .Values.mongo.database }}"
+      restartPolicy: Never
+
+
+  

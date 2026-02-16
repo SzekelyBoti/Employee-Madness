@@ -1,0 +1,18 @@
+﻿mongo:
+  persistence: false
+  storageClass: gp2
+  serviceType: ClusterIP
+
+server:
+  serviceType: LoadBalancer
+  image:
+    repository: <AWS_ECR_BACKEND_URI>
+    tag: "{{ .Values.buildTag }}"
+
+client:
+  serviceType: LoadBalancer
+  image:
+    repository: <AWS_ECR_FRONTEND_URI>
+    tag: "{{ .Values.buildTag }}"
+
+  

@@ -130,279 +130,53 @@ jobs:
         working-directory: ./terraform
         run: terraform init
 
-      - name: Import ALL existing AWS resources
-        if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
-        working-directory: ./terraform
-        run: |
-          echo "🔧 Importing ALL existing AWS resources into Terraform..."
-          echo "=========================================================="
-          
-          # Function to safely import any resource
-          safe_import() {
-            local tf_address=$1
-            local aws_id=$2
-            local resource_type=$3
-          
-            echo "Checking: $tf_address"
-            if [ -n "$aws_id" ] && [ "$aws_id" != "None" ]; then
-              echo "  → Importing: $aws_id"
-              terraform import "$tf_address" "$aws_id" 2>/dev/null && echo "    ✅ Success" || echo "    ⚠️  Failed (may already be in state)"
-            else
-              echo "  → Does not exist"
-            fi
-          }
-          
-          # 1. Import ECR Repositories
-          echo ""
-          echo "1. Importing ECR Repositories..."
-          ECR_REPOS=$(aws ecr describe-repositories --query 'repositories[].repositoryName' --output text 2>/dev/null || echo "")
-          for REPO in $ECR_REPOS; do
-            if [[ $REPO == employee-madness-* ]]; then
-              TF_NAME="${REPO#employee-madness-}"
-              safe_import "aws_ecr_repository.$TF_NAME" "$REPO" "ECR"
-            fi
-          done
-          
-          # 2. Import IAM Roles
-          echo ""
-          echo "2. Importing IAM Roles..."
-          IAM_ROLES=$(aws iam list-roles --query 'Roles[].RoleName' --output text 2>/dev/null || echo "")
-          for ROLE in $IAM_ROLES; do
-            if [[ $ROLE == employee-madness-* ]]; then
-              TF_NAME="${ROLE#employee-madness-cluster-}"
-              TF_NAME="${TF_NAME%-role}"
-              safe_import "aws_iam_role.${TF_NAME}_role" "$ROLE" "IAM"
-            fi
-          done
-          
-          # Import IAM policy attachments
-          echo ""
-          echo "3. Importing IAM Policy Attachments..."
-          if aws iam get-role --role-name employee-madness-cluster-eks-role > /dev/null 2>&1; then
-            echo "Importing EKS role policy attachments..."
-            terraform import aws_iam_role_policy_attachment.eks_cluster_policy \
-              "employee-madness-cluster-eks-role/arn:aws:iam::aws:policy/AmazonEKSClusterPolicy" || echo "EKS policy import failed"
-          fi
-          
-          if aws iam get-role --role-name employee-madness-cluster-node-role > /dev/null 2>&1; then
-            echo "Importing node role policy attachments..."
-            terraform import aws_iam_role_policy_attachment.eks_node_policy_attach \
-              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy" || echo "Node policy import failed"
-            terraform import aws_iam_role_policy_attachment.cni_policy_attach \
-              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy" || echo "CNI policy import failed"
-            terraform import aws_iam_role_policy_attachment.ssm_policy_attach \
-              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore" || echo "SSM policy import failed"
-            terraform import aws_iam_role_policy_attachment.cloudwatch_policy_attach \
-              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy" || echo "CloudWatch policy import failed"
-            terraform import aws_iam_role_policy_attachment.ecr_readonly_attach \
-              "employee-madness-cluster-node-role/arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly" || echo "ECR policy import failed"
-          fi
-          
-          # 4. Import EKS Cluster
-          echo ""
-          echo "4. Importing EKS Cluster..."
-          if aws eks describe-cluster --name "${{ env.CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" > /dev/null 2>&1; then
-            safe_import "aws_eks_cluster.my_cluster" "${{ env.CLUSTER_NAME }}" "EKS"
-          
-            # Import node groups
-            NODE_GROUPS=$(aws eks list-nodegroups --cluster-name "${{ env.CLUSTER_NAME }}" --region "${{ env.AWS_REGION }}" --query 'nodegroups' --output text 2>/dev/null || echo "")
-            for NG in $NODE_GROUPS; do
-              safe_import "aws_eks_node_group.node_group" "${{ env.CLUSTER_NAME }}:$NG" "EKS Node Group"
-            done
-          fi
-          
-          # 5. Import VPC and Networking
-          echo ""
-          echo "5. Importing VPC and Networking..."
-          VPC_ID=$(aws ec2 describe-vpcs --region "${{ env.AWS_REGION }}" --filters "Name=tag:Name,Values=*employee-madness*" --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "")
-          safe_import "aws_vpc.eks_vpc" "$VPC_ID" "VPC"
-          
-          # Import subnets
-          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-            SUBNETS=$(aws ec2 describe-subnets --region "${{ env.AWS_REGION }}" --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[].[SubnetId,Tags[?Key==`Name`].Value[]]' --output text 2>/dev/null || echo "")
-          
-            COUNT=0
-            while IFS=$'\t' read -r SUBNET_ID SUBNET_NAME; do
-              COUNT=$((COUNT+1))
-              if [[ $SUBNET_NAME == *employee-madness* ]] || [ -n "$SUBNET_ID" ]; then
-                LETTER=$([ $COUNT -eq 1 ] && echo "a" || echo "b")
-                safe_import "aws_subnet.eks_subnet_public_$LETTER" "$SUBNET_ID" "Subnet"
-              fi
-            done <<< "$SUBNETS"
-          fi
-          
-          # 6. Import Security Groups
-          echo ""
-          echo "6. Importing Security Groups..."
-          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-            SG_ID=$(aws ec2 describe-security-groups --region "${{ env.AWS_REGION }}" --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=*employee-madness*" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-            safe_import "aws_security_group.eks_sg" "$SG_ID" "Security Group"
-          fi
-          
-          # 7. Import Internet Gateway
-          echo ""
-          echo "7. Importing Internet Gateway..."
-          if [ -n "$VPC_ID" ] && [ "$VPC_ID" != "None" ]; then
-            IG_ID=$(aws ec2 describe-internet-gateways --region "${{ env.AWS_REGION }}" --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[0].InternetGatewayId' --output text 2>/dev/null || echo "")
-            safe_import "aws_internet_gateway.eks_igw" "$IG_ID" "Internet Gateway"
-          fi
-          
-          echo ""
-          echo "✅ Import process complete!"
-
       - name: Apply Terraform
         if: steps.eks-check.outputs.CLUSTER_EXISTS != 'true'
         id: terraform-apply
         working-directory: ./terraform
-        run: |
-          # Apply Terraform
-          terraform apply -auto-approve -input=false
-            
-          # Don't read from terraform output - just use the known name
-          echo "✅ Terraform applied successfully"
-          # No need to set EKS_CLUSTER_NAME here - it will be set in next step
+        run: terraform apply -auto-approve -input=false
 
       # ========== SET ENVIRONMENT VARIABLES ==========
       - name: Set deployment variables
         run: |
-          # Always use the predefined cluster name
           echo "EKS_CLUSTER_NAME=${{ env.CLUSTER_NAME }}" >> $GITHUB_ENV
-          
-          # Set ECR URIs
           echo "ECR_FRONTEND_URI=${{ steps.ecr-setup.outputs.ECR_FRONTEND_URI }}" >> $GITHUB_ENV
           echo "ECR_BACKEND_URI=${{ steps.ecr-setup.outputs.ECR_BACKEND_URI }}" >> $GITHUB_ENV
           echo "ECR_POPULATE_URI=${{ steps.ecr-setup.outputs.ECR_POPULATE_URI }}" >> $GITHUB_ENV
-          
-          echo "=== Deployment Variables ==="
-          echo "EKS_CLUSTER_NAME: ${{ env.CLUSTER_NAME }}"
-          echo "ECR_FRONTEND_URI: ${{ steps.ecr-setup.outputs.ECR_FRONTEND_URI }}"
-          echo "ECR_BACKEND_URI: ${{ steps.ecr-setup.outputs.ECR_BACKEND_URI }}"
-          echo "ECR_POPULATE_URI: ${{ steps.ecr-setup.outputs.ECR_POPULATE_URI }}"
 
-      # ========== VERIFY KUBECTL ACCESS ==========
       - name: Verify kubectl access
         run: |
-          echo "Configuring kubectl for cluster: ${{ env.EKS_CLUSTER_NAME }}"
-          
           aws eks update-kubeconfig \
             --region "${{ env.AWS_REGION }}" \
             --name "${{ env.EKS_CLUSTER_NAME }}" \
             --alias "${{ env.EKS_CLUSTER_NAME }}"
-          
-          echo "=== Testing kubectl access ==="
-          kubectl cluster-info || echo "Cluster info not available yet"
-          kubectl get nodes --request-timeout=30s || echo "Nodes not available yet - cluster may still be initializing"
+          kubectl cluster-info
+          kubectl get nodes --request-timeout=30s
 
-      # ========== DEPLOY BACKEND FIRST ==========
-      - name: Deploy backend
+      # ========== HELM DEPLOYMENTS ==========
+      - name: Deploy backend with Helm
         run: |
-          echo "Deploying backend..."
-          kubectl create namespace "${{ env.NAMESPACE_DEFAULT }}" --dry-run=client -o yaml | kubectl apply -f -
-          kubectl apply -f k8s/server.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
-          echo "Waiting for backend service..."
-          sleep 10
+          helm upgrade --install server ./helm \
+            --namespace "${{ env.NAMESPACE_DEFAULT }}" \
+            --create-namespace \
+            --set server.image.repository="${{ env.ECR_BACKEND_URI }}" \
+            --set server.image.tag="${{ env.CI_BUILD_TAG }}-prod" \
+            --wait --timeout 300s
 
-      # ========== GET BACKEND LOAD BALANCER ==========
-      - name: Get backend LoadBalancer URL
-        id: get-backend-lb
+      - name: Deploy frontend with Helm
         run: |
-          echo "Waiting for backend LoadBalancer..."
-          BACKEND_HOST=""
-          for i in {1..30}; do
-            BACKEND_HOST=$(kubectl get svc server -n "${{ env.NAMESPACE_DEFAULT }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
-            if [ -n "$BACKEND_HOST" ]; then
-              echo "API_URL=http://$BACKEND_HOST:8080" >> $GITHUB_ENV
-              echo "Backend LoadBalancer: $BACKEND_HOST"
-              break
-            fi
-            echo "Attempt $i/30: LoadBalancer not ready yet..."
-            sleep 5
-          done
-          
-          if [ -z "$BACKEND_HOST" ]; then
-            echo "WARNING: Could not get LoadBalancer hostname"
-            echo "API_URL=http://localhost:8080" >> $GITHUB_ENV
-          fi
+          helm upgrade --install client ./helm \
+            --namespace "${{ env.NAMESPACE_DEFAULT }}" \
+            --set client.image.repository="${{ env.ECR_FRONTEND_URI }}" \
+            --set client.image.tag="${{ env.FRONTEND_PROD_TAG }}" \
+            --wait --timeout 300s
 
-      # ========== BUILD AND PUSH PRODUCTION IMAGES ==========
-      - name: Build and push production frontend image
-        env:
-          REACT_APP_API_URL: ${{ env.API_URL }}
+      - name: Deploy MongoDB with Helm
         run: |
-          aws ecr get-login-password --region "${{ env.AWS_REGION }}" | \
-            docker login --username AWS --password-stdin "${{ env.ECR_FRONTEND_URI }}"
-          
-          PROD_TAG="${{ env.CI_BUILD_TAG }}-prod"
-          echo "FRONTEND_PROD_TAG=$PROD_TAG" >> $GITHUB_ENV
-          
-          echo "Building production frontend with API_URL: $REACT_APP_API_URL"
-          docker build \
-            --build-arg REACT_APP_API_URL="$REACT_APP_API_URL" \
-            -t frontend:$PROD_TAG ./client
-          
-          docker tag frontend:$PROD_TAG "${{ env.ECR_FRONTEND_URI }}:$PROD_TAG"
-          docker push "${{ env.ECR_FRONTEND_URI }}:$PROD_TAG"
-          
-          docker tag frontend:$PROD_TAG "${{ env.ECR_FRONTEND_URI }}:latest"
-          docker push "${{ env.ECR_FRONTEND_URI }}:latest"
-          
-          echo "Frontend image pushed: ${{ env.ECR_FRONTEND_URI }}:$PROD_TAG"
-
-      - name: Build and push production backend image
-        run: |
-          aws ecr get-login-password --region "${{ env.AWS_REGION }}" | \
-            docker login --username AWS --password-stdin "${{ env.ECR_BACKEND_URI }}"
-          
-          PROD_TAG="${{ env.CI_BUILD_TAG }}-prod"
-          echo "Building production backend..."
-          
-          docker build -t backend:$PROD_TAG ./server
-          docker tag backend:$PROD_TAG "${{ env.ECR_BACKEND_URI }}:$PROD_TAG"
-          docker push "${{ env.ECR_BACKEND_URI }}:$PROD_TAG"
-          
-          docker tag backend:$PROD_TAG "${{ env.ECR_BACKEND_URI }}:latest"
-          docker push "${{ env.ECR_BACKEND_URI }}:latest"
-          
-          echo "Backend image pushed: ${{ env.ECR_BACKEND_URI }}:$PROD_TAG"
-
-      # ========== DEPLOY MONGODB ==========
-      - name: Deploy MongoDB
-        run: |
-          kubectl apply -f k8s/mongo.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
-          
-          kubectl wait --for=condition=ready pod -l app=mongo \
-            -n "${{ env.NAMESPACE_DEFAULT }}" \
-            --timeout=120s || echo "MongoDB might still be starting"
-
-      # ========== UPDATE DEPLOYMENTS ==========
-      - name: Update backend deployment with production image
-        run: |
-          kubectl set image deployment/server \
-            server="${{ env.ECR_BACKEND_URI }}:${{ env.CI_BUILD_TAG }}-prod" \
-            -n "${{ env.NAMESPACE_DEFAULT }}" || echo "Backend update might have failed"
-          
-          kubectl rollout status deployment/server \
-            -n "${{ env.NAMESPACE_DEFAULT }}" \
-            --timeout=180s || echo "Backend rollout check failed"
-
-      - name: Deploy or update frontend
-        run: |
-          if kubectl get deployment client -n "${{ env.NAMESPACE_DEFAULT }}" > /dev/null 2>&1; then
-            echo "Updating existing frontend deployment..."
-            kubectl set image deployment/client \
-              client="${{ env.ECR_FRONTEND_URI }}:${{ env.FRONTEND_PROD_TAG }}" \
-              -n "${{ env.NAMESPACE_DEFAULT }}"
-          else
-            echo "Creating new frontend deployment..."
-            kubectl apply -f k8s/client.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
-            kubectl set image deployment/client \
-              client="${{ env.ECR_FRONTEND_URI }}:${{ env.FRONTEND_PROD_TAG }}" \
-              -n "${{ env.NAMESPACE_DEFAULT }}"
-          fi
-          
-          kubectl rollout status deployment/client \
-            -n "${{ env.NAMESPACE_DEFAULT }}" \
-            --timeout=180s || echo "Frontend rollout check failed"
+          helm upgrade --install mongo ./helm \
+            --namespace "${{ env.NAMESPACE_DEFAULT }}" \
+            --set mongo.persistence=true \
+            --wait --timeout 300s
 
       # ========== SETUP MONITORING ==========
       - name: Setup monitoring namespace
@@ -420,7 +194,7 @@ jobs:
             --create-namespace \
             --set grafana.adminPassword=admin \
             --wait --timeout=300s
-      # ========== DEPLOY MONITORING RESOURCES ==========
+
       - name: Deploy backend monitoring
         run: |
           kubectl apply -f k8s/server-service.yaml
@@ -433,52 +207,20 @@ jobs:
           kubectl apply -f k8s/populate-job.yaml -n "${{ env.NAMESPACE_DEFAULT }}"
           kubectl wait --for=condition=complete job/employees-populate \
             -n "${{ env.NAMESPACE_DEFAULT }}" \
-            --timeout=120s || echo "Population job may have failed"
+            --timeout=120s
 
       # ========== VERIFY DEPLOYMENT ==========
       - name: Wait for pods to be ready
         run: |
-          kubectl wait --for=condition=ready pod -l app=server \
-            -n "${{ env.NAMESPACE_DEFAULT }}" \
-            --timeout=180s || echo "Backend pods not ready"
-          
-          kubectl wait --for=condition=ready pod -l app=client \
-            -n "${{ env.NAMESPACE_DEFAULT }}" \
-            --timeout=180s || echo "Frontend pods not ready"
-          
-          kubectl wait --for=condition=ready pod -l app=mongo \
-            -n "${{ env.NAMESPACE_DEFAULT }}" \
-            --timeout=120s || echo "MongoDB pods not ready"
+          kubectl wait --for=condition=ready pod -l app=server -n "${{ env.NAMESPACE_DEFAULT }}" --timeout=180s
+          kubectl wait --for=condition=ready pod -l app=client -n "${{ env.NAMESPACE_DEFAULT }}" --timeout=180s
+          kubectl wait --for=condition=ready pod -l app=mongo -n "${{ env.NAMESPACE_DEFAULT }}" --timeout=120s
 
-      # ========== DISPLAY RESULTS ==========
       - name: Display deployment summary
         run: |
-          echo "## 🚀 Deployment Complete!" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Deployment Details:**" >> $GITHUB_STEP_SUMMARY
-          echo "- **Cluster:** ${{ env.EKS_CLUSTER_NAME }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Build Tag:** ${{ env.CI_BUILD_TAG }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Production Tag:** ${{ env.CI_BUILD_TAG }}-prod" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
           FRONTEND_URL=$(kubectl get svc client -n "${{ env.NAMESPACE_DEFAULT }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending...")
           BACKEND_URL=$(kubectl get svc server -n "${{ env.NAMESPACE_DEFAULT }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending...")
-          
-          echo "**Application URLs:**" >> $GITHUB_STEP_SUMMARY
-          echo "- **Frontend:** [http://$FRONTEND_URL](http://$FRONTEND_URL)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Backend API:** [http://$BACKEND_URL:8080](http://$BACKEND_URL:8080)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "**Pod Status:**" >> $GITHUB_STEP_SUMMARY
-          kubectl get pods -n "${{ env.NAMESPACE_DEFAULT }}" -o wide 2>/dev/null | sed 's/^/  /' >> $GITHUB_STEP_SUMMARY || echo "  Unable to get pod status" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          
-          echo "**Monitoring:**" >> $GITHUB_STEP_SUMMARY
-          echo "aws eks update-kubeconfig \--region eu-north-1 \--name employee-madness-cluster"
-          echo "- Grafana: \`kubectl port-forward svc/monitoring-grafana 3000:80 -n ${{ env.NAMESPACE_MONITOR }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Prometheus: \`kubectl port-forward svc/monitoring-kube-prometheus-prometheus 9090:9090 -n ${{ env.NAMESPACE_MONITOR }}\`" >> $GITHUB_STEP_SUMMARY
-          
           echo "✅ Deployment Complete!"
           echo "Frontend URL: http://$FRONTEND_URL"
-          echo "Backend API URL: http://$BACKEND_URL:8080"   
+          echo "Backend API URL: http://$BACKEND_URL:8080"
+   

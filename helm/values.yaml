@@ -1,0 +1,31 @@
+﻿app:
+  name: employee-madness
+
+namespace:
+  default: default
+  monitoring: monitoring
+
+mongo:
+  database: employeesdb
+  port: 27017
+  persistence: false      # default for local
+
+server:
+  port: 8080
+  image:
+    repository: boti95/backend
+    tag: latest
+  serviceType: ClusterIP
+
+client:
+  port: 80
+  image:
+    repository: boti95/frontend
+    tag: latest
+  serviceType: ClusterIP
+
+monitoring:
+  enabled: true
+  grafanaAdminPassword: admin
+
+  

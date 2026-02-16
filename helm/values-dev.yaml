@@ -1,0 +1,11 @@
+﻿mongo:
+  persistence: false
+  serviceType: ClusterIP
+
+server:
+  serviceType: ClusterIP
+
+client:
+  serviceType: ClusterIP
+
+  
