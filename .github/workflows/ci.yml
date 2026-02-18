@@ -32,12 +32,13 @@ jobs:
           CI=false REACT_APP_API_URL=http://localhost:8080 npm run build
           echo "Frontend builds successfully"
 
-      - name: Build Docker images (development only)
-        if: github.event_name == 'push' && github.ref == 'refs/heads/development'
+      - name: Build Docker images
         run: |
           # Generate build tag
           TAG=$(date +%s)
           echo "$TAG" > frontend_tag.txt
+          echo "Generated tag: $TAG"
+          ls -l
           
           # Build Docker images to verify they work
           docker build -t frontend:$TAG ./client
