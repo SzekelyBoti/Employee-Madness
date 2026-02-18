@@ -32,7 +32,6 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: build-tag
-          github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
 
       - name: Read build tag from CI
@@ -167,14 +166,14 @@ jobs:
           helm upgrade --install client ./helm \
             --namespace "${{ env.NAMESPACE_DEFAULT }}" \
             --set client.image.repository="${{ env.ECR_FRONTEND_URI }}" \
-            --set client.image.tag="${{ env.FRONTEND_PROD_TAG }}" \
+            --set client.image.tag="${{ env.CI_BUILD_TAG }}-prod" \
             --wait --timeout 300s
 
       - name: Deploy MongoDB with Helm
         run: |
           helm upgrade --install mongo ./helm \
             --namespace "${{ env.NAMESPACE_DEFAULT }}" \
-            --set mongo.persistence=true \
+            --set mongo.persistence=false \
             --wait --timeout 300s
 
       # ========== SETUP MONITORING ==========
