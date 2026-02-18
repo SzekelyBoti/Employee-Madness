@@ -3,7 +3,7 @@
 on:
   push:
     branches:
-      - refactor/helm
+      - development
   pull_request:
 
 jobs:
