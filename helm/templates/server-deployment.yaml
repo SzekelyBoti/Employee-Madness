@@ -1,0 +1,30 @@
+﻿apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.app.name }}-server
+  namespace: {{ .Values.namespace.default }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.app.name }}-server
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.app.name }}-server
+    spec:
+      containers:
+          - name: server
+            image: "{{ .Values.server.image.repository }}:{{ .Values.server.image.tag }}"
+            ports:
+              - containerPort: {{ .Values.server.port }}
+            env:
+              - name: PORT
+                value: "{{ .Values.server.port }}"
+              - name: NODE_ENV
+                value: "production"
+              - name: MONGO_URL
+                value: "mongodb://{{ .Values.app.name }}-mongo:{{ .Values.mongo.port }}/{{ .Values.mongo.database }}"
+
+
+  

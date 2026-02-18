@@ -1,0 +1,26 @@
+﻿apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.app.name }}-client
+  namespace: {{ .Values.namespace.default }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ .Values.app.name }}-client
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.app.name }}-client
+    spec:
+      containers:
+          - name: client
+            image: "{{ .Values.client.image.repository }}:{{ .Values.client.image.tag }}"
+            ports:
+              - containerPort: {{ .Values.client.port }}
+            env:
+              - name: REACT_APP_API_URL
+                value: "http://{{ .Values.app.name }}-server:{{ .Values.server.port }}"
+
+
+  

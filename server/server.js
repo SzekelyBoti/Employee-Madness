@@ -191,10 +191,8 @@ app.patch("/api/employees/:id", async (req, res, next) => {
       return res.status(400).json({ error: "Invalid employee ID" });
     }
 
-    // Handle level numeric casting
     if (update.level !== undefined) update.level = Number(update.level);
 
-    // Handle working group
     if (workingGroup === "") {
       update.workingGroup = null;
     } else if (workingGroup) {
@@ -203,8 +201,7 @@ app.patch("/api/employees/:id", async (req, res, next) => {
       }
       update.workingGroup = mongoose.Types.ObjectId(workingGroup);
     }
-
-    // Update employee and ensure we always get a populated object
+    
     let employee = await EmployeeModel.findByIdAndUpdate(
         id,
         { $set: update },
@@ -214,8 +211,7 @@ app.patch("/api/employees/:id", async (req, res, next) => {
     if (!employee) {
       return res.status(404).json({ error: "Employee not found" });
     }
-
-    // Add to working group only if valid
+    
     if (workingGroup && update.workingGroup) {
       await WorkingGroupModel.findByIdAndUpdate(workingGroup, {
         $addToSet: { employees: employee._id },
