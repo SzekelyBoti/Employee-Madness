@@ -220,5 +220,4 @@ jobs:
           BACKEND_URL=$(kubectl get svc server -n "${{ env.NAMESPACE_DEFAULT }}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "Pending...")
           echo "✅ Deployment Complete!"
           echo "Frontend URL: http://$FRONTEND_URL"
-          echo "Backend API URL: http://$BACKEND_URL:8080"
-   
+          echo "Backend API URL: http://$BACKEND_URL:8080"   
